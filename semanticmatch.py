@@ -350,5 +350,5 @@ def patch_circlelog(
         ts = seconds_to_timestamp(result.chunk.window.start_sec)
         sub_entries.append(f"[{ts}] :: {result.span.text}")
 
-    patched = lines[:insert_after] + sub_entries + lines[insert_after + 1 :]
+    patched = lines[: insert_after + 1] + sub_entries + lines[insert_after + 1 :]
     mapping_path.write_text("\n".join(patched) + "\n", encoding="utf-8")

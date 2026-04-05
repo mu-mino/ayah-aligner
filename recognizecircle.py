@@ -479,10 +479,10 @@ def detect_markers(path: str) -> int:
     frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     return detect_markers_from_gray(frame)
 
-parser = argparse.ArgumentParser()
-parser.add_argument("path")
-args = parser.parse_args()
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("path")
+    args = parser.parse_args()
 
-circle_count = detect_markers(args.path)
-
-print(circle_count)
+    circle_count = detect_markers(args.path)
+    print(circle_count)

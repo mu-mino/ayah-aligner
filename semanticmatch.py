@@ -22,34 +22,39 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
-from pipeline.core.whispertranscribe import ChunkTranscription
+from whispertranscribe import ChunkTranscription
 
 # ---------------------------------------------------------------------------
 # Modell-Konstanten (austauschbar)
 # ---------------------------------------------------------------------------
 
 DEFAULT_TRANSLATION_MODEL: str = "Helsinki-NLP/opus-mt-ar-en"
-DEFAULT_EMBEDDING_MODEL: str = "sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
+DEFAULT_EMBEDDING_MODEL: str = (
+    "sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
+)
 
-WINDOW_SIZE: int = 10   # Wörter pro Sliding-Window-Kandidat
-WINDOW_STEP: int = 3    # Schrittweite des Sliding-Window
+WINDOW_SIZE: int = 10  # Wörter pro Sliding-Window-Kandidat
+WINDOW_STEP: int = 3  # Schrittweite des Sliding-Window
 
 
 # ---------------------------------------------------------------------------
 # Datenstrukturen
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class TextSpan:
     """Ein zusammenhängender Textspan aus dem Vers."""
-    start: int   # Zeichenposition im Vers-Text (inklusiv)
-    end: int     # Zeichenposition im Vers-Text (exklusiv)
+
+    start: int  # Zeichenposition im Vers-Text (inklusiv)
+    end: int  # Zeichenposition im Vers-Text (exklusiv)
     text: str
 
 
 @dataclass
 class MatchResult:
     """Ergebnis des Matchings für einen einzelnen Chunk."""
+
     chunk: ChunkTranscription
     translation: str
     span: TextSpan
@@ -60,10 +65,13 @@ class MatchResult:
 @dataclass
 class GuardReport:
     """Ergebnis der Guard-Prüfung über alle Spans."""
+
     order_passed: bool
     completeness_passed: bool
-    order_violations: List[int] = field(default_factory=list)   # result-Indizes
-    uncovered_ranges: List[Tuple[int, int]] = field(default_factory=list)  # Lücken als (start, end)
+    order_violations: List[int] = field(default_factory=list)  # result-Indizes
+    uncovered_ranges: List[Tuple[int, int]] = field(
+        default_factory=list
+    )  # Lücken als (start, end)
 
     @property
     def passed(self) -> bool:
@@ -73,6 +81,7 @@ class GuardReport:
 @dataclass
 class MatchSession:
     """Gesamtergebnis einer Matching-Sitzung für einen Vers."""
+
     verse_text: str
     results: List[MatchResult] = field(default_factory=list)
     guard: Optional[GuardReport] = None
@@ -81,6 +90,7 @@ class MatchSession:
 # ---------------------------------------------------------------------------
 # Hilfsfunktionen
 # ---------------------------------------------------------------------------
+
 
 def extract_verse_text(mapping_line: str) -> Optional[str]:
     """
@@ -101,7 +111,7 @@ def _sliding_windows(verse_text: str, window_size: int, step: int) -> List[TextS
     spans: List[TextSpan] = []
     i = 0
     while i < len(words):
-        chunk_words = words[i: i + window_size]
+        chunk_words = words[i : i + window_size]
         chunk_text = " ".join(chunk_words)
         start_char = verse_text.index(chunk_text, spans[-1].start if spans else 0)
         end_char = start_char + len(chunk_text)
@@ -115,6 +125,7 @@ def _sliding_windows(verse_text: str, window_size: int, step: int) -> List[TextS
 # ---------------------------------------------------------------------------
 # Guard
 # ---------------------------------------------------------------------------
+
 
 def run_guard(results: List[MatchResult], verse_text: str) -> GuardReport:
     """
@@ -144,11 +155,13 @@ def run_guard(results: List[MatchResult], verse_text: str) -> GuardReport:
         prev_end = max(prev_end, span.end)
 
     # Vollständigkeit: Lücken im Vers-Text ermitteln (Whitespace toleriert)
-    sorted_spans = sorted([(r.span.start, r.span.end) for r in results], key=lambda x: x[0])
+    sorted_spans = sorted(
+        [(r.span.start, r.span.end) for r in results], key=lambda x: x[0]
+    )
     uncovered: List[Tuple[int, int]] = []
 
     if sorted_spans[0][0] > 0:
-        prefix = verse_text[:sorted_spans[0][0]]
+        prefix = verse_text[: sorted_spans[0][0]]
         if prefix.strip():
             uncovered.append((0, sorted_spans[0][0]))
 
@@ -177,6 +190,7 @@ def run_guard(results: List[MatchResult], verse_text: str) -> GuardReport:
 # Übersetzer
 # ---------------------------------------------------------------------------
 
+
 def build_translator(
     model_name: str = DEFAULT_TRANSLATION_MODEL,
 ) -> Callable[[str], str]:
@@ -197,6 +211,7 @@ def build_translator(
 # ---------------------------------------------------------------------------
 # Matcher
 # ---------------------------------------------------------------------------
+
 
 def build_matcher(
     model_name: str = DEFAULT_EMBEDDING_MODEL,
@@ -233,6 +248,7 @@ def build_matcher(
 # Öffentliche API
 # ---------------------------------------------------------------------------
 
+
 def run_matching(
     chunks: List[ChunkTranscription],
     verse_text: str,
@@ -266,12 +282,14 @@ def run_matching(
     for chunk in chunks:
         translation = translator(chunk.raw_text)
         span, score = matcher(translation, verse_text)
-        session.results.append(MatchResult(
-            chunk=chunk,
-            translation=translation,
-            span=span,
-            score=score,
-        ))
+        session.results.append(
+            MatchResult(
+                chunk=chunk,
+                translation=translation,
+                span=span,
+                score=score,
+            )
+        )
 
     guard = run_guard(session.results, verse_text)
     session.guard = guard
@@ -286,6 +304,7 @@ def run_matching(
 # ---------------------------------------------------------------------------
 # Circlelog patchen
 # ---------------------------------------------------------------------------
+
 
 def patch_circlelog(
     mapping_path: Path,
@@ -308,7 +327,7 @@ def patch_circlelog(
     affected_timestamp : Timestamp des betroffenen Eintrags, z. B. "00:10".
     session            : MatchSession mit den Ergebnissen aus run_matching().
     """
-    from pipeline.core.circlelog import seconds_to_timestamp
+    from circlelog import seconds_to_timestamp
 
     if not session.results:
         return
@@ -331,5 +350,5 @@ def patch_circlelog(
         ts = seconds_to_timestamp(result.chunk.window.start_sec)
         sub_entries.append(f"[{ts}] :: {result.span.text}")
 
-    patched = lines[:insert_after] + sub_entries + lines[insert_after + 1:]
+    patched = lines[:insert_after] + sub_entries + lines[insert_after + 1 :]
     mapping_path.write_text("\n".join(patched) + "\n", encoding="utf-8")

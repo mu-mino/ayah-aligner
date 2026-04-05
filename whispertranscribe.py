@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional
 
-from pipeline.core.videowindow import FrameWindow
+from videowindow import FrameWindow
 
 # ---------------------------------------------------------------------------
 # Konfiguration
@@ -28,18 +28,20 @@ from pipeline.core.videowindow import FrameWindow
 
 WHISPER_MODEL: str = "large-v2"
 WHISPER_LANGUAGE: str = "ar"
-WHISPER_COMPUTE_TYPE: str = "float16"   # "int8" für CPU ohne VRAM
-AUDIO_SAMPLE_RATE: int = 16000          # WhisperX erwartet 16 kHz
+WHISPER_COMPUTE_TYPE: str = "float16"  # "int8" für CPU ohne VRAM
+AUDIO_SAMPLE_RATE: int = 16000  # WhisperX erwartet 16 kHz
 
 
 # ---------------------------------------------------------------------------
 # Datenstrukturen
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class TranscriptSegment:
     """Ein einzelnes Transkript-Segment mit Zeitstempel."""
-    start: float   # Sekunden relativ zum Videobeginn
+
+    start: float  # Sekunden relativ zum Videobeginn
     end: float
     text: str
 
@@ -53,6 +55,7 @@ class ChunkTranscription:
     segments    : von WhisperX erkannte Satz-/Wort-Segmente
     raw_text    : vollständiger Transkripttext des Fensters
     """
+
     window: FrameWindow
     segments: List[TranscriptSegment] = field(default_factory=list)
     raw_text: str = ""
@@ -61,6 +64,7 @@ class ChunkTranscription:
 # ---------------------------------------------------------------------------
 # Audio-Extraktion
 # ---------------------------------------------------------------------------
+
 
 def _extract_audio_chunk(
     video_path: Path,
@@ -76,14 +80,21 @@ def _extract_audio_chunk(
     """
     duration = max(0.01, end_sec - start_sec)
     cmd = [
-        "ffmpeg", "-y",
-        "-ss", str(start_sec),
-        "-t", str(duration),
-        "-i", str(video_path),
+        "ffmpeg",
+        "-y",
+        "-ss",
+        str(start_sec),
+        "-t",
+        str(duration),
+        "-i",
+        str(video_path),
         "-vn",
-        "-ac", "1",
-        "-ar", str(sample_rate),
-        "-f", "wav",
+        "-ac",
+        "1",
+        "-ar",
+        str(sample_rate),
+        "-f",
+        "wav",
         str(tmp_path),
     ]
     result = subprocess.run(cmd, capture_output=True)
@@ -98,6 +109,7 @@ def _extract_audio_chunk(
 # ---------------------------------------------------------------------------
 # Modell laden
 # ---------------------------------------------------------------------------
+
 
 def load_model(
     device: Optional[str] = None,
@@ -140,6 +152,7 @@ def load_model(
 # Transkription
 # ---------------------------------------------------------------------------
 
+
 def transcribe_chunk(
     model,
     video_path: Path,
@@ -177,11 +190,13 @@ def transcribe_chunk(
     offset = window.start_sec
     segments: List[TranscriptSegment] = []
     for seg in result.get("segments", []):
-        segments.append(TranscriptSegment(
-            start=seg["start"] + offset,
-            end=seg["end"] + offset,
-            text=seg["text"].strip(),
-        ))
+        segments.append(
+            TranscriptSegment(
+                start=seg["start"] + offset,
+                end=seg["end"] + offset,
+                text=seg["text"].strip(),
+            )
+        )
 
     raw_text = " ".join(s.text for s in segments)
     return ChunkTranscription(window=window, segments=segments, raw_text=raw_text)

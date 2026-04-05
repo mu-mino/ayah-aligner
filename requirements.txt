@@ -1,0 +1,9 @@
+numpy
+opencv-python-headless
+torch
+whisperx
+transformers
+sentence-transformers
+pytest
+sentencepiece
+sacremoses

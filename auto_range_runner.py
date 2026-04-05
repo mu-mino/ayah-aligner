@@ -2,7 +2,7 @@ import os
 import subprocess
 import asyncio
 
-start_id, end_id = 98, 98
+start_id, end_id = 98, 99
 
 cwd = os.getcwd()
 
@@ -42,6 +42,7 @@ for i in (
             stdout=None,
             stderr=None,
         )
+        stdout, stderr = await process.communicate()
 
     asyncio.run(run_process(text_file, audio, video))
     print(f"running process with id {i}")

@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
-from whispertranscribe import ChunkTranscription
+from modules.whispertranscribe import ChunkTranscription
 
 # ---------------------------------------------------------------------------
 # Modell-Konstanten (austauschbar)
@@ -327,7 +327,7 @@ def patch_circlelog(
     affected_timestamp : Timestamp des betroffenen Eintrags, z. B. "00:10".
     session            : MatchSession mit den Ergebnissen aus run_matching().
     """
-    from circlelog import seconds_to_timestamp
+    from modules.circlelog import seconds_to_timestamp
 
     if not session.results:
         return

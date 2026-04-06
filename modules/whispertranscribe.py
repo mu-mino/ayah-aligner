@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional
 
-from videowindow import FrameWindow
+from modules.videowindow import FrameWindow
 
 # ---------------------------------------------------------------------------
 # Konfiguration

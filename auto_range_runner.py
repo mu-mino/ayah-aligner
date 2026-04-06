@@ -26,7 +26,7 @@ def wait_until_stopped(pid):
 
 async def check_pids(pids):
     tasks = [asyncio.create_task(wait_until_stopped(pid)) for pid in pids]
-    await asyncio.gather(*tasks)  # wartet hier auf alle Tasks
+    await asyncio.gather(*tasks)
 
 
 async def run_process(text_file, audio, video):
@@ -48,9 +48,6 @@ async def run_process(text_file, audio, video):
 pids = []
 
 for proc, i in enumerate(range(start_id, end_id)):
-    if len(pids) == 13:
-        asyncio.run(check_pids(pids))
-        pids = []
     text_file = subprocess.run(
         f"find /home/muhammed-emin-eser/desk/din/quran/eng_translation/chunked_translation/ -type f -name '{i}_*'",
         shell=True,
@@ -74,3 +71,8 @@ for proc, i in enumerate(range(start_id, end_id)):
     pids.append(process.pid)
 
     print(f"running process with id {i}")
+    if len(pids) == 13:
+        asyncio.run(check_pids(pids))
+        pids = []
+    elif len(pids) == proc + 1:
+        asyncio.run(check_pids(pids))

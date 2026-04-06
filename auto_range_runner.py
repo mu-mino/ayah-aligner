@@ -1,32 +1,10 @@
 import os
 import subprocess
 import asyncio
-import time
 
 start_id, end_id = 98, 99
 
 cwd = os.getcwd()
-
-
-def is_running(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    else:
-        return True
-
-
-def wait_until_stopped(pid):
-    while is_running(pid):
-        time.sleep(5)
-
-
-async def check_pids(pids):
-    tasks = [asyncio.create_task(wait_until_stopped(pid)) for pid in pids]
-    await asyncio.gather(*tasks)
 
 
 async def run_process(text_file, audio, video):
@@ -45,7 +23,11 @@ async def run_process(text_file, audio, video):
     return process
 
 
-pids = []
+async def wait_for_processes(processes):
+    await asyncio.gather(*[p.wait() for p in processes])
+
+
+processes = []
 
 for proc, i in enumerate(range(start_id, end_id)):
     text_file = subprocess.run(
@@ -68,11 +50,10 @@ for proc, i in enumerate(range(start_id, end_id)):
     ).stdout.strip()
 
     process = asyncio.run(run_process(text_file, audio, video))
-    pids.append(process.pid)
-
+    processes.append(process)
     print(f"running process with id {i}")
-    if len(pids) == 13:
-        asyncio.run(check_pids(pids))
-        pids = []
-    elif len(pids) == proc + 1:
-        asyncio.run(check_pids(pids))
+
+    is_last = i == end_id - 1
+    if len(processes) == 13 or (is_last and processes):
+        asyncio.run(wait_for_processes(processes))
+        processes = []

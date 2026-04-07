@@ -38,6 +38,15 @@ WINDOW_STEP: int = 3  # Schrittweite des Sliding-Window
 
 MAX_CORRECTION_ATTEMPTS: int = 3  # Max. Korrekturrunden pro Session
 
+# Prepended to every matcher query so the model knows the task context up front.
+MATCHING_CONTEXT = (
+    "Quran verse recitation synchronization. "
+    "The verse is read strictly from beginning to end — forward only, no gaps, no repetition. "
+    "Each audio chunk covers the next consecutive portion of the verse. "
+    "Chunk {i} of {n}: assign this translation to its correct span in the verse. "
+    "Translation: {translation}"
+)
+
 
 # ---------------------------------------------------------------------------
 # Datenstrukturen
@@ -300,9 +309,11 @@ def run_matching(
     if matcher is None:
         matcher = build_matcher()
 
-    for chunk in chunks:
+    n = len(chunks)
+    for i, chunk in enumerate(chunks):
         translation = translator(chunk.raw_text)
-        span, score = matcher(translation, verse_text)
+        query = MATCHING_CONTEXT.format(i=i + 1, n=n, translation=translation)
+        span, score = matcher(query, verse_text)
         session.results.append(
             MatchResult(
                 chunk=chunk,

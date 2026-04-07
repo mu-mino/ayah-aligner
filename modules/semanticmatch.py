@@ -17,16 +17,18 @@ Springen und Auslassen sind nicht erlaubt.
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from pathlib import Path
 from typing import List, Optional, Tuple
 
+import regex
+
 from modules.whispertranscribe import ChunkTranscription
 
 # ---------------------------------------------------------------------------
-# Scoring helpers (ported from modules/seqMatcherTool.py — pure functions,
-# no Arabic-NLP dependency)
+# Scoring helpers
 # ---------------------------------------------------------------------------
 
 
@@ -40,12 +42,14 @@ def _lcs_length(a_tokens: list, b_tokens: list) -> int:
             if ai == b_tokens[j - 1]:
                 dp[i][j] = dp[i - 1][j - 1] + 1
             else:
-                dp[i][j] = dp[i - 1][j] if dp[i - 1][j] >= dp[i][j - 1] else dp[i][j - 1]
+                dp[i][j] = (
+                    dp[i - 1][j] if dp[i - 1][j] >= dp[i][j - 1] else dp[i][j - 1]
+                )
     return dp[n][m]
 
 
 def _rouge_l(reference: str, candidate: str) -> float:
-    """ROUGE-L F-score (LCS-based, beta=1.2). Source: seqMatcherTool._rouge_l."""
+    """ROUGE-L F-score (LCS-based, beta=1.2)"""
     ref_tokens = str(reference).split()
     cand_tokens = str(candidate).split()
     if not ref_tokens or not cand_tokens:
@@ -54,10 +58,50 @@ def _rouge_l(reference: str, candidate: str) -> float:
     recall = lcs / len(ref_tokens)
     precision = lcs / len(cand_tokens)
     beta = 1.2
-    denom = recall + (beta ** 2) * precision
+    denom = recall + (beta**2) * precision
     if denom == 0:
         return 0.0
-    return ((1 + beta ** 2) * recall * precision) / denom
+    return ((1 + beta**2) * recall * precision) / denom
+
+
+# ---------------------------------------------------------------------------
+# Arabische Normalisierung
+# ---------------------------------------------------------------------------
+
+_AR_DIACRITICS = regex.compile(r"[\p{M}\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED]+")
+_AR_TATWEEL = "\u0640"
+_AR_NON_ARABIC = regex.compile(r"[^\p{Arabic} ]+")
+_AR_MULTI_SPACE = regex.compile(r"\s+")
+_AR_PREFIX = regex.compile(r"(?<!\S)(و|ف|ب|ك|ل|س)\s+(?=\S)", regex.UNICODE)
+_AR_CHAR_MAP = str.maketrans(
+    {
+        "آ": "ا",
+        "ٱ": "ا",
+        "ى": "ي",
+        "ئ": "ي",
+        "ؤ": "و",
+        "ة": "ه",
+        "ء": "",
+        "گ": "ك",
+        "ڤ": "ف",
+        "پ": "ب",
+        "چ": "ج",
+    }
+)
+
+
+def _normalize_arabic(text: str) -> str:
+    if not text:
+        return ""
+    text = unicodedata.normalize("NFKD", text)
+    text = _AR_DIACRITICS.sub("", text)
+    text = text.replace(_AR_TATWEEL, "")
+    text = text.translate(_AR_CHAR_MAP)
+    text = _AR_NON_ARABIC.sub(" ", text)
+    text = _AR_MULTI_SPACE.sub(" ", text).strip()
+    text = _AR_PREFIX.sub(r"\1", text)
+    return unicodedata.normalize("NFKC", text)
+
 
 # ---------------------------------------------------------------------------
 # Konstanten
@@ -65,8 +109,9 @@ def _rouge_l(reference: str, candidate: str) -> float:
 
 QURAN_API_BASE: str = "https://api.quran.com/api/v4"
 QURAN_TRANSLATION_ID: int = 203  # Al-Hilali & Khan
+WORD_MATCH_TOLERANCE: float = 0.5
 
-MAX_CORRECTION_ATTEMPTS: int = 3  # Max. Korrekturrunden pro Session
+_CACHE_DIR: Path = Path(__file__).resolve().parent.parent / "data"
 
 
 # ---------------------------------------------------------------------------
@@ -91,7 +136,6 @@ class MatchResult:
     arabic_text: str
     span: TextSpan
     score: float
-    correction_requested: bool = False
 
 
 @dataclass
@@ -151,8 +195,13 @@ def extract_verse_number(mapping_line: str) -> Optional[int]:
 
 
 def _fetch_verse_words(surah: int, ayah: int) -> list:
-    """Holt wortgenaues Alignment für einen Vers von quran.com."""
+    """Holt wortgenaues Alignment für einen Vers von quran.com, mit lokalem Cache."""
+    import json
     import requests
+
+    cache_file = _CACHE_DIR / f"{surah}_{ayah}.json"
+    if cache_file.exists():
+        return json.loads(cache_file.read_text(encoding="utf-8"))
 
     resp = requests.get(
         f"{QURAN_API_BASE}/verses/by_key/{surah}:{ayah}",
@@ -164,55 +213,50 @@ def _fetch_verse_words(surah: int, ayah: int) -> list:
     )
     resp.raise_for_status()
     verse = resp.json()["verse"]
-    return [w for w in verse["words"] if w.get("text_uthmani") and w["char_type_name"] != "end"]
+    words = [
+        w
+        for w in verse["words"]
+        if w.get("text_uthmani") and w["char_type_name"] != "end"
+    ]
+    _CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    cache_file.write_text(
+        json.dumps(words, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    return words
 
 
-def _normalize_arabic(text: str) -> str:
-    """Entfernt Diakritika und normalisiert Alef-Varianten."""
-    text = re.sub(r"[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06DC\u06DF-\u06E4\u06E7\u06E8\u06EA-\u06ED]", "", text)
-    text = re.sub(r"[أإآٱ]", "ا", text)
-    text = text.replace("\u0640", "")
-    text = re.sub(r"[،؛؟!\u06D4\u06D5]", "", text)
+def _word_to_translation(arabic_word: str, verse_words: list) -> str:
+    """
+    Findet das beste Match für ein arabisches Wort in der Vers-Wortliste und
+    gibt dessen englische Übersetzung zurück.
+    Wirft ValueError wenn kein Match >= WORD_MATCH_TOLERANCE gefunden wird.
+    """
+    norm_word = _normalize_arabic(arabic_word)
+    best_score = 0.0
+    best_match = None
+
+    for w in verse_words:
+        norm_verse = _normalize_arabic(w["text_uthmani"])
+        score = SequenceMatcher(None, norm_word, norm_verse).ratio()
+        if score > best_score:
+            best_score = score
+            best_match = w
+
+    if best_score < WORD_MATCH_TOLERANCE or best_match is None:
+        raise ValueError(
+            f"Kein Match für '{arabic_word}' (bestes: {best_score:.2f}, Schwelle: {WORD_MATCH_TOLERANCE})"
+        )
+
+    t = best_match.get("translation", {})
+    text = t.get("text", "") if isinstance(t, dict) else ""
+    if re.match(r"^\(\d+\)$", text.strip()):
+        return ""
     return text.strip()
 
 
-def _match_arabic_to_verse_words(arabic_chunk: str, verse_words: list) -> Tuple[int, int, float]:
-    """
-    Findet den zusammenhängenden Block von Vers-Wörtern der am besten zum
-    arabischen Chunk passt. Gibt (start_idx, end_idx, score) zurück (end exklusiv).
-    """
-    chunk_words = [_normalize_arabic(w) for w in arabic_chunk.split() if _normalize_arabic(w)]
-    verse_norm = [_normalize_arabic(w["text_uthmani"]) for w in verse_words]
-
-    n = len(verse_words)
-    best_score = -1.0
-    best_start, best_end = 0, n
-
-    for start in range(n):
-        for end in range(start + 1, n + 1):
-            window = verse_norm[start:end]
-            hits = sum(1 for w in chunk_words if w in window)
-            ratio = SequenceMatcher(None, chunk_words, window).ratio()
-            score = 0.5 * (hits / max(len(chunk_words), 1)) + 0.5 * ratio
-            if score > best_score:
-                best_score = score
-                best_start, best_end = start, end
-
-    return best_start, best_end, best_score
-
-
-def _concat_word_translations(matched_words: list) -> str:
-    """Konkateniert die englischen Wort-Übersetzungen der gematchten Vers-Wörter."""
-    parts = []
-    for w in matched_words:
-        t = w.get("translation", {})
-        text = t.get("text", "") if isinstance(t, dict) else ""
-        if text and not re.match(r"^\(\d+\)$", text.strip()):
-            parts.append(text.strip())
-    return " ".join(parts)
-
-
-def _find_span_by_sequencematcher(query: str, full_translation: str) -> Tuple[int, int, str, float]:
+def _find_span_by_sequencematcher(
+    query: str, full_translation: str
+) -> Tuple[int, int, str, float]:
     """
     Findet den Substring in full_translation mit dem höchsten SequenceMatcher-Score
     gegen query. Gleitet wortweise über den vollen Text (O(n²)).
@@ -235,7 +279,7 @@ def _find_span_by_sequencematcher(query: str, full_translation: str) -> Tuple[in
 
     for i in range(n):
         for j in range(i + 1, n + 1):
-            span_text = full_translation[offsets[i][0]:offsets[j - 1][1]]
+            span_text = full_translation[offsets[i][0] : offsets[j - 1][1]]
             ratio = _rouge_l(query.lower(), span_text.lower())
             if ratio > best_ratio:
                 best_ratio = ratio
@@ -243,6 +287,45 @@ def _find_span_by_sequencematcher(query: str, full_translation: str) -> Tuple[in
                 best_end = offsets[j - 1][1]
 
     return best_start, best_end, full_translation[best_start:best_end], best_ratio
+
+
+# ---------------------------------------------------------------------------
+# Gap Fill
+# ---------------------------------------------------------------------------
+
+
+def _fill_gaps(results: List[MatchResult], verse_text: str) -> None:
+    """
+    Klebt unkovered Text-Bereiche an den nächsten Nachbar-Span.
+    Nur für echte Abweichungen — Divergenz wird davor per ValueError abgefangen.
+    Modifiziert results in-place.
+    """
+    if not results:
+        return
+
+    by_start = sorted(results, key=lambda r: r.span.start)
+
+    # Prefix: vor dem ersten Span
+    if by_start[0].span.start > 0 and verse_text[: by_start[0].span.start].strip():
+        by_start[0].span.start = 0
+        by_start[0].span.text = verse_text[0 : by_start[0].span.end]
+
+    # Middle: Lücken zwischen benachbarten Spans
+    for i in range(1, len(by_start)):
+        prev = by_start[i - 1]
+        curr = by_start[i]
+        if (
+            curr.span.start > prev.span.end
+            and verse_text[prev.span.end : curr.span.start].strip()
+        ):
+            prev.span.end = curr.span.start
+            prev.span.text = verse_text[prev.span.start : prev.span.end]
+
+    # Suffix: nach dem letzten Span
+    last = by_start[-1]
+    if last.span.end < len(verse_text) and verse_text[last.span.end :].strip():
+        last.span.end = len(verse_text)
+        last.span.text = verse_text[last.span.start :]
 
 
 # ---------------------------------------------------------------------------
@@ -365,23 +448,28 @@ def run_matching(
         session.guard = GuardReport(order_passed=True, completeness_passed=True)
         return session
 
-    verse_words = _fetch_verse_words(surah, ayah)
-
     for chunk in chunks:
-        arabic_text = chunk.raw_text
-        start_idx, end_idx, _ = _match_arabic_to_verse_words(arabic_text, verse_words)
-        matched_words = verse_words[start_idx:end_idx]
-        query = _concat_word_translations(matched_words)
-        char_start, char_end, span_text, score = _find_span_by_sequencematcher(query, verse_text)
+        verse_words = _fetch_verse_words(surah, ayah)  # per Chunk, gecacht
+        translations = []
+        for word in chunk.raw_text.split():
+            translation = _word_to_translation(word, verse_words)
+            if translation:
+                translations.append(translation)
+
+        query = " ".join(translations)
+        char_start, char_end, span_text, score = _find_span_by_sequencematcher(
+            query, verse_text
+        )
         session.results.append(
             MatchResult(
                 chunk=chunk,
-                arabic_text=arabic_text,
+                arabic_text=chunk.raw_text,
                 span=TextSpan(start=char_start, end=char_end, text=span_text),
                 score=score,
             )
         )
 
+    _fill_gaps(session.results, verse_text)
     session.guard = run_guard(session.results, verse_text)
     return session
 

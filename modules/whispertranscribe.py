@@ -30,6 +30,7 @@ WHISPER_MODEL: str = "large-v2"
 WHISPER_LANGUAGE: str = "ar"
 WHISPER_COMPUTE_TYPE: str = "float16"  # "int8" für CPU ohne VRAM
 AUDIO_SAMPLE_RATE: int = 16000  # WhisperX erwartet 16 kHz
+SEGMENT_END_TOLERANCE: float = 1.0  # Sekunden, die an segment.end addiert werden
 
 
 # ---------------------------------------------------------------------------
@@ -193,7 +194,7 @@ def transcribe_chunk(
         segments.append(
             TranscriptSegment(
                 start=seg["start"] + offset,
-                end=seg["end"] + offset,
+                end=seg["end"] + offset + SEGMENT_END_TOLERANCE,
                 text=seg["text"].strip(),
             )
         )

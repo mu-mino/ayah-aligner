@@ -89,7 +89,7 @@ FrameWindow [start_sec ──── end_sec]
 | `recognizecircle.py`   | Kreise in einem Frame erkennen (geometrisch)                 | Graustufenbild                                     | Anzahl erkannter Kreise          |
 | `circlelog.py`         | Zeitstempel erkannter Kreise im Mapping-Format dokumentieren | Timestamps + Vers-Texte                            | `[MM:SS] :: vers_id : text`-Datei|
 | `whispertranscribe.py` | Audio-Häppchen mit WhisperX transkribieren                   | Videopfad + `List[FrameWindow]`                    | `List[ChunkTranscription]`       |
-| `semanticmatch.py`     | Arabischen Text übersetzen + gegen Teile EINES Verses matchen| `List[ChunkTranscription]` + Vers-Text (ein String)| `MatchSession`                   |
+| `semanticmatch.py`     | Arabischen Text übersetzen + gegen Teile eines Verses matchen| `List[ChunkTranscription]` + Vers-Text (ein String)| `MatchSession`                   |
 
 ---
 

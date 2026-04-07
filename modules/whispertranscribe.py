@@ -20,6 +20,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional
 
+import numpy as np
+
 from modules.videowindow import FrameWindow
 
 # ---------------------------------------------------------------------------
@@ -30,7 +32,24 @@ WHISPER_MODEL: str = "large-v2"
 WHISPER_LANGUAGE: str = "ar"
 WHISPER_COMPUTE_TYPE: str = "float16"  # "int8" für CPU ohne VRAM
 AUDIO_SAMPLE_RATE: int = 16000  # WhisperX erwartet 16 kHz
-SEGMENT_END_TOLERANCE: float = 1.0  # Sekunden, die an segment.end addiert werden
+SEGMENT_END_TOLERANCE: float = 10.0  # Sekunden, die an segment.end addiert werden
+
+# Quranic recitation (tajweed/melody) is often misclassified as non-speech.
+# Disable no_speech filtering and lower VAD onset/offset to capture all audio.
+# initial_prompt primes Whisper toward Arabic Quranic vocabulary.
+ASR_OPTIONS: dict = {
+    "no_speech_threshold": 1.0,
+    "initial_prompt": "بسم الله الرحمن الرحيم",
+}
+VAD_OPTIONS: dict = {"vad_onset": 0.1, "vad_offset": 0.1, "min_silence_duration_ms": 2000}
+
+AUDIO_PADDING_SEC: float = 1.0  # Stille vor jedem Chunk (hilft WhisperX Spracheinsatz zu erkennen)
+SILENCE_COMPRESS_MIN_SEC: float = 2.0  # Pausen länger als N Sekunden werden komprimiert
+SILENCE_COMPRESS_TARGET_SEC: float = 0.5  # Ziel-Pausenlänge nach Kompression
+SILENCE_THRESHOLD: float = 0.005  # Amplitudenschwelle für Stille-Erkennung
+
+MAX_TRANSCRIBE_RETRIES: int = 3  # retries on poor timestamp coverage
+COVERAGE_TOLERANCE: float = 2.0  # seconds gap allowed at start/end before retry
 
 
 # ---------------------------------------------------------------------------
@@ -108,6 +127,46 @@ def _extract_audio_chunk(
 
 
 # ---------------------------------------------------------------------------
+# Audio-Vorverarbeitung
+# ---------------------------------------------------------------------------
+
+
+def _preprocess_audio(wav_path: Path, sample_rate: int = AUDIO_SAMPLE_RATE) -> np.ndarray:
+    """
+    Lädt eine WAV-Datei und bereitet das Audio für WhisperX vor:
+      1. Fügt AUDIO_PADDING_SEC Stille am Anfang ein (hilft Spracheinsatz zu erkennen).
+      2. Komprimiert Pausen > SILENCE_COMPRESS_MIN_SEC auf SILENCE_COMPRESS_TARGET_SEC.
+    """
+    import whisperx
+
+    audio = whisperx.load_audio(str(wav_path))
+
+    # 1. Stille-Padding am Anfang
+    padding = np.zeros(int(sample_rate * AUDIO_PADDING_SEC), dtype=np.float32)
+    audio = np.concatenate([padding, audio])
+
+    # 2. Pausen kürzen
+    is_speech = np.abs(audio) > SILENCE_THRESHOLD
+    speech_indices = np.where(is_speech)[0]
+
+    if len(speech_indices) > 0:
+        min_gap = int(SILENCE_COMPRESS_MIN_SEC * sample_rate)
+        target_gap = int(SILENCE_COMPRESS_TARGET_SEC * sample_rate)
+        parts = [audio[: speech_indices[0]]]
+        for i in range(len(speech_indices) - 1):
+            curr, nxt = speech_indices[i], speech_indices[i + 1]
+            if nxt - curr > min_gap:
+                parts.append(audio[curr : curr + 1])
+                parts.append(np.zeros(target_gap, dtype=np.float32))
+            else:
+                parts.append(audio[curr : curr + 1])
+        parts.append(audio[speech_indices[-1] :])
+        audio = np.concatenate(parts)
+
+    return audio
+
+
+# ---------------------------------------------------------------------------
 # Modell laden
 # ---------------------------------------------------------------------------
 
@@ -146,6 +205,8 @@ def load_model(
         device=device,
         compute_type=compute_type,
         language=WHISPER_LANGUAGE,
+        asr_options=ASR_OPTIONS,
+        vad_options=VAD_OPTIONS,
     )
 
 
@@ -175,15 +236,25 @@ def transcribe_chunk(
     -------
     ChunkTranscription mit Segmenten und vollständigem Text.
     """
-    import whisperx
-
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
         tmp_path = Path(tmp.name)
 
     try:
-        _extract_audio_chunk(video_path, window.start_sec, window.end_sec, tmp_path)
-        audio = whisperx.load_audio(str(tmp_path))
+        _extract_audio_chunk(
+            video_path,
+            window.start_sec,
+            window.end_sec + SEGMENT_END_TOLERANCE,
+            tmp_path,
+        )
+        audio = _preprocess_audio(tmp_path)
+        audio_duration = len(audio) / AUDIO_SAMPLE_RATE
+
         result = model.transcribe(audio, language=WHISPER_LANGUAGE)
+        for _ in range(MAX_TRANSCRIBE_RETRIES):
+            segs = result.get("segments", [])
+            if segs and segs[0]["start"] <= COVERAGE_TOLERANCE and segs[-1]["end"] >= audio_duration - COVERAGE_TOLERANCE:
+                break
+            result = model.transcribe(audio, language=WHISPER_LANGUAGE)
     finally:
         tmp_path.unlink(missing_ok=True)
 

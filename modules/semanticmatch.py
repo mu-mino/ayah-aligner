@@ -1,10 +1,9 @@
 """
-Semantisches Matching: übersetzter Chunk → Span aus dem Vers-Text.
+Semantisches Matching: arabischer Chunk → Span aus dem englischen Vers-Text.
 
 Ablauf pro ChunkTranscription:
-    1. Übersetzer : arabischer raw_text → englische Übersetzung
-    2. Matcher    : findet den Textspan im Vers, der der Übersetzung
-                    am ähnlichsten ist (sliding window über Wörter)
+    1. Matcher    : findet den Textspan im Vers, der dem arabischen raw_text
+                    am ähnlichsten ist (Cross-Lingual Embeddings, sliding window)
 
 Guard prüft die vom Modell getroffenen Span-Auswahlen:
     1. Kontiguität   : jeder Span ist ein zusammenhängender Substring
@@ -19,33 +18,20 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from difflib import SequenceMatcher
 from pathlib import Path
-from typing import Callable, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
 from modules.whispertranscribe import ChunkTranscription
 
 # ---------------------------------------------------------------------------
-# Modell-Konstanten (austauschbar)
+# Konstanten
 # ---------------------------------------------------------------------------
 
-DEFAULT_TRANSLATION_MODEL: str = "Helsinki-NLP/opus-mt-ar-en"
-DEFAULT_EMBEDDING_MODEL: str = (
-    "sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
-)
-
-WINDOW_SIZE: int = 10  # Wörter pro Sliding-Window-Kandidat
-WINDOW_STEP: int = 3  # Schrittweite des Sliding-Window
+QURAN_API_BASE: str = "https://api.quran.com/api/v4"
+QURAN_TRANSLATION_ID: int = 203  # Al-Hilali & Khan
 
 MAX_CORRECTION_ATTEMPTS: int = 3  # Max. Korrekturrunden pro Session
-
-# Prepended to every matcher query so the model knows the task context up front.
-MATCHING_CONTEXT = (
-    "Quran verse recitation synchronization. "
-    "The verse is read strictly from beginning to end — forward only, no gaps, no repetition. "
-    "Each audio chunk covers the next consecutive portion of the verse. "
-    "Chunk {i} of {n}: assign this translation to its correct span in the verse. "
-    "Translation: {translation}"
-)
 
 
 # ---------------------------------------------------------------------------
@@ -67,7 +53,7 @@ class MatchResult:
     """Ergebnis des Matchings für einen einzelnen Chunk."""
 
     chunk: ChunkTranscription
-    translation: str
+    arabic_text: str
     span: TextSpan
     score: float
     correction_requested: bool = False
@@ -83,7 +69,9 @@ class GuardReport:
     uncovered_ranges: List[Tuple[int, int]] = field(
         default_factory=list
     )  # Lücken als (start, end)
-    correction_hints: List[Tuple[int, str]] = field(default_factory=list)  # (chunk_idx, hint)
+    correction_hints: List[Tuple[int, str]] = field(
+        default_factory=list
+    )  # (chunk_idx, hint)
 
     @property
     def passed(self) -> bool:
@@ -112,26 +100,114 @@ def extract_verse_text(mapping_line: str) -> Optional[str]:
     m = re.match(r"^\[\d{2}:\d{2}\]\s*::\s*(.+)$", mapping_line.strip())
     if not m:
         return None
-    return m.group(1).strip()
+    text = m.group(1).strip()
+    return re.sub(r"^\d+:\s*", "", text)
 
 
-def _sliding_windows(verse_text: str, window_size: int, step: int) -> List[TextSpan]:
+def extract_verse_number(mapping_line: str) -> Optional[int]:
+    """Extrahiert die erste Vers-Nummer aus einer circlelog-Zeile."""
+    m = re.match(r"^\[\d{2}:\d{2}\]\s*::\s*(\d+):", mapping_line.strip())
+    return int(m.group(1)) if m else None
+
+
+# ---------------------------------------------------------------------------
+# Quran API
+# ---------------------------------------------------------------------------
+
+
+def _fetch_verse_words(surah: int, ayah: int) -> list:
+    """Holt wortgenaues Alignment für einen Vers von quran.com."""
+    import requests
+
+    resp = requests.get(
+        f"{QURAN_API_BASE}/verses/by_key/{surah}:{ayah}",
+        params={
+            "words": "true",
+            "word_fields": "text_uthmani,translation",
+            "translations": QURAN_TRANSLATION_ID,
+        },
+    )
+    resp.raise_for_status()
+    verse = resp.json()["verse"]
+    return [w for w in verse["words"] if w.get("text_uthmani") and w["char_type_name"] != "end"]
+
+
+def _normalize_arabic(text: str) -> str:
+    """Entfernt Diakritika und normalisiert Alef-Varianten."""
+    text = re.sub(r"[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06DC\u06DF-\u06E4\u06E7\u06E8\u06EA-\u06ED]", "", text)
+    text = re.sub(r"[أإآٱ]", "ا", text)
+    text = text.replace("\u0640", "")
+    text = re.sub(r"[،؛؟!\u06D4\u06D5]", "", text)
+    return text.strip()
+
+
+def _match_arabic_to_verse_words(arabic_chunk: str, verse_words: list) -> Tuple[int, int, float]:
     """
-    Erzeugt überlappende Wort-Fenster aus dem Vers-Text als TextSpan-Kandidaten.
+    Findet den zusammenhängenden Block von Vers-Wörtern der am besten zum
+    arabischen Chunk passt. Gibt (start_idx, end_idx, score) zurück (end exklusiv).
     """
-    words = verse_text.split()
-    spans: List[TextSpan] = []
-    i = 0
-    while i < len(words):
-        chunk_words = words[i : i + window_size]
-        chunk_text = " ".join(chunk_words)
-        start_char = verse_text.index(chunk_text, spans[-1].start if spans else 0)
-        end_char = start_char + len(chunk_text)
-        spans.append(TextSpan(start=start_char, end=end_char, text=chunk_text))
-        if i + window_size >= len(words):
-            break
-        i += step
-    return spans
+    chunk_words = [_normalize_arabic(w) for w in arabic_chunk.split() if _normalize_arabic(w)]
+    verse_norm = [_normalize_arabic(w["text_uthmani"]) for w in verse_words]
+
+    n = len(verse_words)
+    best_score = -1.0
+    best_start, best_end = 0, n
+
+    for start in range(n):
+        for end in range(start + 1, n + 1):
+            window = verse_norm[start:end]
+            hits = sum(1 for w in chunk_words if w in window)
+            ratio = SequenceMatcher(None, chunk_words, window).ratio()
+            score = 0.5 * (hits / max(len(chunk_words), 1)) + 0.5 * ratio
+            if score > best_score:
+                best_score = score
+                best_start, best_end = start, end
+
+    return best_start, best_end, best_score
+
+
+def _concat_word_translations(matched_words: list) -> str:
+    """Konkateniert die englischen Wort-Übersetzungen der gematchten Vers-Wörter."""
+    parts = []
+    for w in matched_words:
+        t = w.get("translation", {})
+        text = t.get("text", "") if isinstance(t, dict) else ""
+        if text and not re.match(r"^\(\d+\)$", text.strip()):
+            parts.append(text.strip())
+    return " ".join(parts)
+
+
+def _find_span_by_sequencematcher(query: str, full_translation: str) -> Tuple[int, int, str, float]:
+    """
+    Findet den Substring in full_translation mit dem höchsten SequenceMatcher-Score
+    gegen query. Gleitet wortweise über den vollen Text (O(n²)).
+    """
+    words = full_translation.split()
+    if not words:
+        return 0, len(full_translation), full_translation, 0.0
+
+    # Char-Offsets aufbauen
+    offsets: List[Tuple[int, int]] = []
+    cursor = 0
+    for word in words:
+        idx = full_translation.index(word, cursor)
+        offsets.append((idx, idx + len(word)))
+        cursor = idx + len(word)
+
+    n = len(words)
+    best_ratio = -1.0
+    best_start, best_end = 0, offsets[-1][1]
+
+    for i in range(n):
+        for j in range(i + 1, n + 1):
+            span_text = full_translation[offsets[i][0]:offsets[j - 1][1]]
+            ratio = SequenceMatcher(None, query.lower(), span_text.lower()).ratio()
+            if ratio > best_ratio:
+                best_ratio = ratio
+                best_start = offsets[i][0]
+                best_end = offsets[j - 1][1]
+
+    return best_start, best_end, full_translation[best_start:best_end], best_ratio
 
 
 # ---------------------------------------------------------------------------
@@ -196,12 +272,14 @@ def run_guard(results: List[MatchResult], verse_text: str) -> GuardReport:
     for i in order_violations:
         prev = results[i - 1]
         curr = results[i]
-        correction_hints.append((
-            i,
-            f'Chunk [{i}] goes backward: chunk [{i - 1}] ends at "{prev.span.text}" '
-            f"(pos {prev.span.end}), but chunk [{i}] was placed at pos {curr.span.start}. "
-            f"Recitation always moves forward — a later audio chunk cannot match earlier text.",
-        ))
+        correction_hints.append(
+            (
+                i,
+                f'Chunk [{i}] goes backward: chunk [{i - 1}] ends at "{prev.span.text}" '
+                f"(pos {prev.span.end}), but chunk [{i}] was placed at pos {curr.span.start}. "
+                f"Recitation always moves forward — a later audio chunk cannot match earlier text.",
+            )
+        )
 
     for start, end in uncovered:
         gap_text = verse_text[start:end]
@@ -209,11 +287,13 @@ def run_guard(results: List[MatchResult], verse_text: str) -> GuardReport:
             (i for i, r in enumerate(results) if r.span.end <= start),
             default=len(results) - 1,
         )
-        correction_hints.append((
-            last_before_gap,
-            f'Uncovered gap [{start}–{end}]: "{gap_text}". '
-            f"Every word of the verse must be assigned to a timestamp.",
-        ))
+        correction_hints.append(
+            (
+                last_before_gap,
+                f'Uncovered gap [{start}–{end}]: "{gap_text}". '
+                f"Every word of the verse must be assigned to a timestamp.",
+            )
+        )
 
     return GuardReport(
         order_passed=len(order_violations) == 0,
@@ -225,64 +305,6 @@ def run_guard(results: List[MatchResult], verse_text: str) -> GuardReport:
 
 
 # ---------------------------------------------------------------------------
-# Übersetzer
-# ---------------------------------------------------------------------------
-
-
-def build_translator(
-    model_name: str = DEFAULT_TRANSLATION_MODEL,
-) -> Callable[[str], str]:
-    """Lädt einen Übersetzungs-Pipeline (Arabisch → Englisch)."""
-    from transformers import pipeline as hf_pipeline
-
-    translator = hf_pipeline("translation", model=model_name)
-
-    def translate(arabic_text: str) -> str:
-        if not arabic_text.strip():
-            return ""
-        result = translator(arabic_text, max_length=512)
-        return result[0]["translation_text"]
-
-    return translate
-
-
-# ---------------------------------------------------------------------------
-# Matcher
-# ---------------------------------------------------------------------------
-
-
-def build_matcher(
-    model_name: str = DEFAULT_EMBEDDING_MODEL,
-    window_size: int = WINDOW_SIZE,
-    window_step: int = WINDOW_STEP,
-) -> Callable[[str, str], Tuple[TextSpan, float]]:
-    """
-    Lädt ein Sentence-Transformer-Modell.
-
-    Der Matcher erzeugt Sliding-Window-Kandidaten aus dem Vers-Text
-    und gibt den Span mit der höchsten Ähnlichkeit zur Übersetzung zurück.
-    """
-    from sentence_transformers import SentenceTransformer, util
-
-    model = SentenceTransformer(model_name)
-
-    def match(translation: str, verse_text: str) -> Tuple[TextSpan, float]:
-        candidates = _sliding_windows(verse_text, window_size, window_step)
-        if not candidates:
-            fallback = TextSpan(start=0, end=len(verse_text), text=verse_text)
-            return fallback, 0.0
-
-        query_emb = model.encode(translation, convert_to_tensor=True)
-        cand_embs = model.encode([c.text for c in candidates], convert_to_tensor=True)
-        scores = util.cos_sim(query_emb, cand_embs)[0]
-
-        best_idx = int(scores.argmax())
-        return candidates[best_idx], float(scores[best_idx])
-
-    return match
-
-
-# ---------------------------------------------------------------------------
 # Öffentliche API
 # ---------------------------------------------------------------------------
 
@@ -290,13 +312,17 @@ def build_matcher(
 def run_matching(
     chunks: List[ChunkTranscription],
     verse_text: str,
-    translator: Optional[Callable[[str], str]] = None,
-    matcher: Optional[Callable[[str, str], Tuple[TextSpan, float]]] = None,
+    surah: int,
+    ayah: int,
 ) -> MatchSession:
-    """Translate each chunk and select its span from verse_text.
+    """
+    Matcht jeden arabischen Chunk gegen den englischen Vers-Text via quran.com API.
 
-    On guard failure, re-runs the matcher up to MAX_CORRECTION_ATTEMPTS times
-    with the correction hint appended to the query.
+    Ablauf pro Chunk:
+        1. quran.com liefert wortgenaues Alignment für surah:ayah
+        2. Arabischen Chunk gegen Vers-Wörter matchen → Positionen [i, j]
+        3. Wort-Übersetzungen [i..j] konkatenieren → Query
+        4. SequenceMatcher findet besten Substring-Match in verse_text
     """
     session = MatchSession(verse_text=verse_text)
 
@@ -304,54 +330,24 @@ def run_matching(
         session.guard = GuardReport(order_passed=True, completeness_passed=True)
         return session
 
-    if translator is None:
-        translator = build_translator()
-    if matcher is None:
-        matcher = build_matcher()
+    verse_words = _fetch_verse_words(surah, ayah)
 
-    n = len(chunks)
-    for i, chunk in enumerate(chunks):
-        translation = translator(chunk.raw_text)
-        query = MATCHING_CONTEXT.format(i=i + 1, n=n, translation=translation)
-        span, score = matcher(query, verse_text)
+    for chunk in chunks:
+        arabic_text = chunk.raw_text
+        start_idx, end_idx, _ = _match_arabic_to_verse_words(arabic_text, verse_words)
+        matched_words = verse_words[start_idx:end_idx]
+        query = _concat_word_translations(matched_words)
+        char_start, char_end, span_text, score = _find_span_by_sequencematcher(query, verse_text)
         session.results.append(
             MatchResult(
                 chunk=chunk,
-                translation=translation,
-                span=span,
+                arabic_text=arabic_text,
+                span=TextSpan(start=char_start, end=char_end, text=span_text),
                 score=score,
             )
         )
 
-    guard = run_guard(session.results, verse_text)
-    session.guard = guard
-
-    for attempt in range(MAX_CORRECTION_ATTEMPTS):
-        if guard.passed:
-            break
-        hints_by_chunk: dict = {idx: hint for idx, hint in guard.correction_hints}
-        changed = False
-        for chunk_idx, hint in hints_by_chunk.items():
-            original_translation = session.results[chunk_idx].translation
-            augmented_query = f"{original_translation} | {hint}"
-            new_span, new_score = matcher(augmented_query, verse_text)
-            if new_span != session.results[chunk_idx].span:
-                session.results[chunk_idx] = MatchResult(
-                    chunk=session.results[chunk_idx].chunk,
-                    translation=original_translation,
-                    span=new_span,
-                    score=new_score,
-                )
-                changed = True
-        if not changed:
-            break
-        guard = run_guard(session.results, verse_text)
-        session.guard = guard
-
-    if not guard.passed:
-        for i in guard.order_violations:
-            session.results[i].correction_requested = True
-
+    session.guard = run_guard(session.results, verse_text)
     return session
 
 

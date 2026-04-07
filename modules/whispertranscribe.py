@@ -32,7 +32,7 @@ WHISPER_MODEL: str = "large-v2"
 WHISPER_LANGUAGE: str = "ar"
 WHISPER_COMPUTE_TYPE: str = "float16"  # "int8" für CPU ohne VRAM
 AUDIO_SAMPLE_RATE: int = 16000  # WhisperX erwartet 16 kHz
-SEGMENT_END_TOLERANCE: float = 10.0  # Sekunden, die an segment.end addiert werden
+SEGMENT_END_TOLERANCE: float = 1.5  # Sekunden, die an segment.end addiert werden
 
 # Quranic recitation (tajweed/melody) is often misclassified as non-speech.
 # Disable no_speech filtering and lower VAD onset/offset to capture all audio.
@@ -41,9 +41,15 @@ ASR_OPTIONS: dict = {
     "no_speech_threshold": 1.0,
     "initial_prompt": "بسم الله الرحمن الرحيم",
 }
-VAD_OPTIONS: dict = {"vad_onset": 0.1, "vad_offset": 0.1, "min_silence_duration_ms": 2000}
+VAD_OPTIONS: dict = {
+    "vad_onset": 0.1,
+    "vad_offset": 0.1,
+    "min_silence_duration_ms": 2000,
+}
 
-AUDIO_PADDING_SEC: float = 1.0  # Stille vor jedem Chunk (hilft WhisperX Spracheinsatz zu erkennen)
+AUDIO_PADDING_SEC: float = (
+    1.0  # Stille vor jedem Chunk (hilft WhisperX Spracheinsatz zu erkennen)
+)
 SILENCE_COMPRESS_MIN_SEC: float = 2.0  # Pausen länger als N Sekunden werden komprimiert
 SILENCE_COMPRESS_TARGET_SEC: float = 0.5  # Ziel-Pausenlänge nach Kompression
 SILENCE_THRESHOLD: float = 0.005  # Amplitudenschwelle für Stille-Erkennung
@@ -131,7 +137,9 @@ def _extract_audio_chunk(
 # ---------------------------------------------------------------------------
 
 
-def _preprocess_audio(wav_path: Path, sample_rate: int = AUDIO_SAMPLE_RATE) -> np.ndarray:
+def _preprocess_audio(
+    wav_path: Path, sample_rate: int = AUDIO_SAMPLE_RATE
+) -> np.ndarray:
     """
     Lädt eine WAV-Datei und bereitet das Audio für WhisperX vor:
       1. Fügt AUDIO_PADDING_SEC Stille am Anfang ein (hilft Spracheinsatz zu erkennen).
@@ -252,7 +260,11 @@ def transcribe_chunk(
         result = model.transcribe(audio, language=WHISPER_LANGUAGE)
         for _ in range(MAX_TRANSCRIBE_RETRIES):
             segs = result.get("segments", [])
-            if segs and segs[0]["start"] <= COVERAGE_TOLERANCE and segs[-1]["end"] >= audio_duration - COVERAGE_TOLERANCE:
+            if (
+                segs
+                and segs[0]["start"] <= COVERAGE_TOLERANCE
+                and segs[-1]["end"] >= audio_duration - COVERAGE_TOLERANCE
+            ):
                 break
             result = model.transcribe(audio, language=WHISPER_LANGUAGE)
     finally:

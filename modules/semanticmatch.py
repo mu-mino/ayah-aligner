@@ -25,6 +25,41 @@ from typing import List, Optional, Tuple
 from modules.whispertranscribe import ChunkTranscription
 
 # ---------------------------------------------------------------------------
+# Scoring helpers (ported from modules/seqMatcherTool.py — pure functions,
+# no Arabic-NLP dependency)
+# ---------------------------------------------------------------------------
+
+
+def _lcs_length(a_tokens: list, b_tokens: list) -> int:
+    """Longest common subsequence length (word-level)."""
+    n, m = len(a_tokens), len(b_tokens)
+    dp = [[0] * (m + 1) for _ in range(n + 1)]
+    for i in range(1, n + 1):
+        ai = a_tokens[i - 1]
+        for j in range(1, m + 1):
+            if ai == b_tokens[j - 1]:
+                dp[i][j] = dp[i - 1][j - 1] + 1
+            else:
+                dp[i][j] = dp[i - 1][j] if dp[i - 1][j] >= dp[i][j - 1] else dp[i][j - 1]
+    return dp[n][m]
+
+
+def _rouge_l(reference: str, candidate: str) -> float:
+    """ROUGE-L F-score (LCS-based, beta=1.2). Source: seqMatcherTool._rouge_l."""
+    ref_tokens = str(reference).split()
+    cand_tokens = str(candidate).split()
+    if not ref_tokens or not cand_tokens:
+        return 0.0
+    lcs = _lcs_length(ref_tokens, cand_tokens)
+    recall = lcs / len(ref_tokens)
+    precision = lcs / len(cand_tokens)
+    beta = 1.2
+    denom = recall + (beta ** 2) * precision
+    if denom == 0:
+        return 0.0
+    return ((1 + beta ** 2) * recall * precision) / denom
+
+# ---------------------------------------------------------------------------
 # Konstanten
 # ---------------------------------------------------------------------------
 
@@ -201,7 +236,7 @@ def _find_span_by_sequencematcher(query: str, full_translation: str) -> Tuple[in
     for i in range(n):
         for j in range(i + 1, n + 1):
             span_text = full_translation[offsets[i][0]:offsets[j - 1][1]]
-            ratio = SequenceMatcher(None, query.lower(), span_text.lower()).ratio()
+            ratio = _rouge_l(query.lower(), span_text.lower())
             if ratio > best_ratio:
                 best_ratio = ratio
                 best_start = offsets[i][0]

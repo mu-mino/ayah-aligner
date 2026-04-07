@@ -36,6 +36,8 @@ DEFAULT_EMBEDDING_MODEL: str = (
 WINDOW_SIZE: int = 10  # Wörter pro Sliding-Window-Kandidat
 WINDOW_STEP: int = 3  # Schrittweite des Sliding-Window
 
+MAX_CORRECTION_ATTEMPTS: int = 3  # Max. Korrekturrunden pro Session
+
 
 # ---------------------------------------------------------------------------
 # Datenstrukturen
@@ -72,6 +74,7 @@ class GuardReport:
     uncovered_ranges: List[Tuple[int, int]] = field(
         default_factory=list
     )  # Lücken als (start, end)
+    correction_hints: List[Tuple[int, str]] = field(default_factory=list)  # (chunk_idx, hint)
 
     @property
     def passed(self) -> bool:
@@ -178,11 +181,37 @@ def run_guard(results: List[MatchResult], verse_text: str) -> GuardReport:
         if suffix.strip():
             uncovered.append((cursor, len(verse_text)))
 
+    # Static correction hints per violation, explaining why the selection is invalid.
+    correction_hints: List[Tuple[int, str]] = []
+
+    for i in order_violations:
+        prev = results[i - 1]
+        curr = results[i]
+        correction_hints.append((
+            i,
+            f'Chunk [{i}] goes backward: chunk [{i - 1}] ends at "{prev.span.text}" '
+            f"(pos {prev.span.end}), but chunk [{i}] was placed at pos {curr.span.start}. "
+            f"Recitation always moves forward — a later audio chunk cannot match earlier text.",
+        ))
+
+    for start, end in uncovered:
+        gap_text = verse_text[start:end]
+        last_before_gap = max(
+            (i for i, r in enumerate(results) if r.span.end <= start),
+            default=len(results) - 1,
+        )
+        correction_hints.append((
+            last_before_gap,
+            f'Uncovered gap [{start}–{end}]: "{gap_text}". '
+            f"Every word of the verse must be assigned to a timestamp.",
+        ))
+
     return GuardReport(
         order_passed=len(order_violations) == 0,
         completeness_passed=len(uncovered) == 0,
         order_violations=order_violations,
         uncovered_ranges=uncovered,
+        correction_hints=correction_hints,
     )
 
 
@@ -255,18 +284,10 @@ def run_matching(
     translator: Optional[Callable[[str], str]] = None,
     matcher: Optional[Callable[[str, str], Tuple[TextSpan, float]]] = None,
 ) -> MatchSession:
-    """
-    Übersetzt jeden Chunk und wählt den passenden Span aus dem Vers-Text.
+    """Translate each chunk and select its span from verse_text.
 
-    Nach allen Chunks wird der Guard ausgeführt. Bei Guard-Verletzungen
-    wird correction_requested in den betroffenen MatchResult-Einträgen gesetzt.
-
-    Parameters
-    ----------
-    chunks     : n=0-Fenster aus whispertranscribe, die zu diesem Vers gehören.
-    verse_text : Vollständiger Text des betroffenen circlelog-Eintrags.
-    translator : Übersetzungsfunktion ar→en. Bei None: build_translator().
-    matcher    : Span-Auswahl-Funktion. Bei None: build_matcher().
+    On guard failure, re-runs the matcher up to MAX_CORRECTION_ATTEMPTS times
+    with the correction hint appended to the query.
     """
     session = MatchSession(verse_text=verse_text)
 
@@ -293,6 +314,28 @@ def run_matching(
 
     guard = run_guard(session.results, verse_text)
     session.guard = guard
+
+    for attempt in range(MAX_CORRECTION_ATTEMPTS):
+        if guard.passed:
+            break
+        hints_by_chunk: dict = {idx: hint for idx, hint in guard.correction_hints}
+        changed = False
+        for chunk_idx, hint in hints_by_chunk.items():
+            original_translation = session.results[chunk_idx].translation
+            augmented_query = f"{original_translation} | {hint}"
+            new_span, new_score = matcher(augmented_query, verse_text)
+            if new_span != session.results[chunk_idx].span:
+                session.results[chunk_idx] = MatchResult(
+                    chunk=session.results[chunk_idx].chunk,
+                    translation=original_translation,
+                    span=new_span,
+                    score=new_score,
+                )
+                changed = True
+        if not changed:
+            break
+        guard = run_guard(session.results, verse_text)
+        session.guard = guard
 
     if not guard.passed:
         for i in guard.order_violations:

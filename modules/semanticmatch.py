@@ -57,7 +57,7 @@ def _rouge_l(reference: str, candidate: str) -> float:
     lcs = _lcs_length(ref_tokens, cand_tokens)
     recall = lcs / len(ref_tokens)
     precision = lcs / len(cand_tokens)
-    beta = 1.2
+    beta = 1.9
     denom = recall + (beta**2) * precision
     if denom == 0:
         return 0.0

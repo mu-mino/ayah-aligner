@@ -2,9 +2,8 @@ import os
 import subprocess
 import asyncio
 
-start_id, end_id = 83, 84
+start_id, end_id = 74, 75
 cwd = os.getcwd()
-
 
 async def run_process(text_file, audio, video, surah_id):
     process = await asyncio.create_subprocess_exec(

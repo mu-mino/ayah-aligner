@@ -1,37 +1,37 @@
-# Pipeline-Orchestrierung
+# Pipeline Orchestration
 
-## Übersicht
+## Overview
 
 ```
-Video + Textdatei
+Video + Text file
        │
        ▼
 ┌─────────────────┐
-│  videowindow    │  Segmentiert das Video anhand schwarzer Bildschirme
-│  extract_windows│  Jedes Fenster = ein Frame [start_sec, end_sec]
+│  videowindow    │  Segments video by black screens
+│  extract_windows│  Each window = one frame [start_sec, end_sec]
 └────────┬────────┘
          │  List[FrameWindow]
          ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                    Für jedes FrameWindow                    │
+│                    For each FrameWindow                     │
 │                                                             │
 │  ┌──────────────────┐                                       │
 │  │ recognizecircle  │  detect_markers(frame)                │
-│  │                  │  → Anzahl erkannter Kreise            │
+│  │                  │  → number of detected circles         │
 │  └────────┬─────────┘                                       │
 │           │                                                 │
 │    ┌──────┴──────┐                                          │
 │    │             │                                          │
 │  n > 0         n = 0                                        │
-│  Kreis(e)    kein Kreis                ┌────────────────┐   │
-│  erkannt     erkannt ──────────────────► whispertranscribe  │
-│                                        └────────────────┘   │
+│  circle(s)   no circle             ┌────────────────┐       │
+│  detected    detected ─────────────► whispertranscribe      │
+│                                    └────────────────┘       │
 └────┬──────────────────────────────────────────────────────── ┘
      │
      ▼
 ┌────────────┐
 │ circlelog  │  build_verse_line(ts, n)
-│            │  → [MM:SS] :: vers_id : text
+│            │  → [MM:SS] :: verse_id : text
 │            │
 │            │  write_mapping(lines)
 │            │  → *_mapping.txt
@@ -40,10 +40,9 @@ Video + Textdatei
 
 ---
 
-## Transkription (n = 0)
+## Transcription (n = 0)
 
-Fenster ohne Kreis werden an
-`whispertranscribe` übergeben. 
+Windows without a circle marker are passed to `whispertranscribe`.
 
 ```
 FrameWindow [start_sec ──── end_sec]
@@ -52,48 +51,48 @@ FrameWindow [start_sec ──── end_sec]
 ┌─────────────────────┐
 │  whispertranscribe  │
 │                     │
-│  1. Audio-Extraktion│  ffmpeg: WAV, mono, 16 kHz
-│     pro Fenster     │  [start_sec, end_sec] aus dem Video
+│  1. Audio extraction│  ffmpeg: WAV, mono, 16 kHz
+│     per window      │  [start_sec, end_sec] sliced from video
 │                     │
-│  2. WhisperX        │  Modell  : large-v2
-│     Transkription   │  Sprache : Arabisch (ar)
+│  2. WhisperX        │  Model   : large-v2
+│     transcription   │  Language: Arabic (ar)
 │                     │  Device  : CUDA / CPU (auto)
 │                     │
-│  3. Zeitstempel-    │  WhisperX zählt ab 0 (Clip-Anfang).          │
-│     Korrektur       │  segment.start += window.start_sec           │
-│                     │  → Zeitstempel werden absolut im Video       │
+│  3. Timestamp       │  WhisperX counts from 0 (clip start).
+│     correction      │  segment.start += window.start_sec
+│                     │  → timestamps become absolute in video
 └──────────┬──────────┘
 
-  Beispiel:
-  FrameWindow liegt bei 30s–45s im Video.
-  WhisperX findet ein Segment bei t=2s im Clip.
-  → 2s + 30s = 32s  (absolute Position im Video)
+  Example:
+  FrameWindow spans 30s–45s in the video.
+  WhisperX finds a segment at t=2s in the clip.
+  → 2s + 30s = 32s  (absolute position in video)
            │
            ▼
   List[ChunkTranscription]
   ┌─────────────────────────────────────────┐
   │ window   : FrameWindow [start, end]     │
   │ segments : [TranscriptSegment, ...]     │
-  │   └─ start, end, text  (absolut)        │
-  │ raw_text : vollständiger Text           │
+  │   └─ start, end, text  (absolute)       │
+  │ raw_text : full transcript text         │
   └─────────────────────────────────────────┘
 ```
 
 ---
 
-## Modul-Übersicht
+## Module Overview
 
-| Modul                  | Zweck                                                        | Eingabe                                            | Ausgabe                          |
+| Module                 | Purpose                                                      | Input                                              | Output                           |
 |------------------------|--------------------------------------------------------------|----------------------------------------------------|----------------------------------|
-| `videowindow.py`       | Video → Fenster zwischen schwarzen Bildschirmen              | Videopfad                                          | `List[FrameWindow]`              |
-| `recognizecircle.py`   | Kreise in einem Frame erkennen (geometrisch)                 | Graustufenbild                                     | Anzahl erkannter Kreise          |
-| `circlelog.py`         | Zeitstempel erkannter Kreise im Mapping-Format dokumentieren | Timestamps + Vers-Texte                            | `[MM:SS] :: vers_id : text`-Datei|
-| `whispertranscribe.py` | Audio-Häppchen mit WhisperX transkribieren                   | Videopfad + `List[FrameWindow]`                    | `List[ChunkTranscription]`       |
-| `semanticmatch.py`     | Arabischen Text übersetzen + gegen Teile eines Verses matchen| `List[ChunkTranscription]` + Vers-Text (ein String)| `MatchSession`                   |
+| `videowindow.py`       | Video → windows between black screens                        | Video path                                         | `List[FrameWindow]`              |
+| `recognizecircle.py`   | Detect circles in a frame (geometric)                        | Grayscale image                                    | Number of detected circles       |
+| `circlelog.py`         | Document detected circle timestamps in mapping format        | Timestamps + verse texts                           | `[MM:SS] :: verse_id : text` file|
+| `whispertranscribe.py` | Transcribe audio chunks with WhisperX                        | Video path + `List[FrameWindow]`                   | `List[ChunkTranscription]`       |
+| `semanticmatch.py`     | Translate Arabic text + match against verse span             | `List[ChunkTranscription]` + verse text (string)   | `MatchSession`                   |
 
 ---
 
-## Datenfluss (kompakt)
+## Data Flow (compact)
 
 ```
 Video
@@ -101,7 +100,7 @@ Video
  ▼
 videowindow ──► List[FrameWindow]
                        │
-               pro Fenster: recognizecircle
+               per window: recognizecircle
                        │
               ┌────────┴────────┐
            n > 0             n = 0
@@ -113,21 +112,21 @@ videowindow ──► List[FrameWindow]
      → _mapping.txt              │
               │                  ▼
               │           semanticmatch
-              │           1. Übersetzer : raw_text (ar) → Englisch
-              └──────────►2. Matcher    : Ähnlichkeit Übersetzung ↔ Vers-Text
-                             (Vers-Text = vollständiger String aus circlelog-Eintrag)
-                          3. Guard      : Vollständigkeit (alle Chunks haben Ergebnis), Sequenzeinhaltung
+              │           1. Translator : raw_text (ar) → English
+              └──────────►2. Matcher    : similarity translation ↔ verse text
+                             (verse text = full string from circlelog entry)
+                          3. Guard      : completeness (all chunks have result), sequence order
                           → MatchSession
 ```
 
-### Guard-Detail
+### Guard Detail
 
 ```
-Chunk 1 → Übersetzung berechnet, Score = 0.82  ✓
-Chunk 2 → Übersetzung berechnet, Score = 0.74  ✓
-Chunk 3 → Fehler bei Übersetzung              ✗  → correction_requested = True
+Chunk 1 → translation computed, score = 0.82  ✓
+Chunk 2 → translation computed, score = 0.74  ✓
+Chunk 3 → translation error                   ✗  → correction_requested = True
                                                     missing_chunks += [Chunk 3]
 
-Nach allen Chunks:
-  missing_chunks nicht leer → completeness_passed = False
+After all chunks:
+  missing_chunks not empty → completeness_passed = False
 ```

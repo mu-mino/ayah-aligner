@@ -7,7 +7,7 @@ start_id, end_id = 98, 99
 cwd = os.getcwd()
 
 
-async def run_process(text_file, audio, video):
+async def run_process(text_file, audio, video, surah_id):
     process = await asyncio.create_subprocess_exec(
         f"{cwd}/.venv/bin/python3",
         "main.py",
@@ -17,6 +17,8 @@ async def run_process(text_file, audio, video):
         audio,
         "--video",
         video,
+        "--surah",
+        str(surah_id),
         stdout=None,
         stderr=None,
     )
@@ -49,7 +51,7 @@ for proc, i in enumerate(range(start_id, end_id)):
         text=True,
     ).stdout.strip()
 
-    process = asyncio.run(run_process(text_file, audio, video))
+    process = asyncio.run(run_process(text_file, audio, video, surah_id=i))
     processes.append(process)
     print(f"running process with id {i}")
 

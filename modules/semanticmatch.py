@@ -111,7 +111,7 @@ QURAN_API_BASE: str = "https://api.quran.com/api/v4"
 QURAN_TRANSLATION_ID: int = 203  # Al-Hilali & Khan
 WORD_MATCH_TOLERANCE: float = 0.5
 
-_CACHE_DIR: Path = Path(__file__).resolve().parent.parent / "data"
+_CACHE_DIR: Path = Path(__file__).resolve().parent.parent / "data" / "api"
 
 
 # ---------------------------------------------------------------------------
@@ -154,7 +154,9 @@ class GuardReport:
 
     @property
     def passed(self) -> bool:
-        return self.order_passed and self.completeness_passed
+        # completeness wird nicht verlangt: der nicht abgedeckte Suffix-Teil des Verses
+        # wird vom circle_window-Eintrag der nächsten Gruppe übernommen.
+        return self.order_passed
 
 
 @dataclass
@@ -296,8 +298,9 @@ def _find_span_by_sequencematcher(
 
 def _fill_gaps(results: List[MatchResult], verse_text: str) -> None:
     """
-    Klebt unkovered Text-Bereiche an den nächsten Nachbar-Span.
-    Nur für echte Abweichungen — Divergenz wird davor per ValueError abgefangen.
+    Füllt den Prefix-Bereich vor dem ersten Span und Lücken zwischen Spans.
+    Der Suffix (nach dem letzten Span) wird NICHT angefasst — er wird vom
+    circle_window-Eintrag der nächsten Gruppe als Fortsetzung übernommen.
     Modifiziert results in-place.
     """
     if not results:
@@ -320,12 +323,6 @@ def _fill_gaps(results: List[MatchResult], verse_text: str) -> None:
         ):
             prev.span.end = curr.span.start
             prev.span.text = verse_text[prev.span.start : prev.span.end]
-
-    # Suffix: nach dem letzten Span
-    last = by_start[-1]
-    if last.span.end < len(verse_text) and verse_text[last.span.end :].strip():
-        last.span.end = len(verse_text)
-        last.span.text = verse_text[last.span.start :]
 
 
 # ---------------------------------------------------------------------------

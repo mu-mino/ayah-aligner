@@ -14,6 +14,7 @@ Dieses Modul:
 Nicht enthalten: Kreiserkennung, Segmenterkennung, Mapping-Schreiben.
 """
 
+import json
 import subprocess
 import tempfile
 from dataclasses import dataclass, field
@@ -23,6 +24,8 @@ from typing import List, Optional
 import numpy as np
 
 from modules.videowindow import FrameWindow
+
+_WHISPER_CACHE_DIR: Path = Path(__file__).resolve().parent.parent / "data" / "whisper"
 
 # ---------------------------------------------------------------------------
 # Konfiguration
@@ -223,6 +226,35 @@ def load_model(
 # ---------------------------------------------------------------------------
 
 
+def _whisper_cache_path(video_path: Path, window: FrameWindow) -> Path:
+    return _WHISPER_CACHE_DIR / f"{video_path.stem}_{window.start_sec:.3f}_{window.end_sec:.3f}.json"
+
+
+def _load_whisper_cache(video_path: Path, window: FrameWindow) -> Optional[ChunkTranscription]:
+    cache_file = _whisper_cache_path(video_path, window)
+    if not cache_file.exists():
+        return None
+    data = json.loads(cache_file.read_text(encoding="utf-8"))
+    segments = [
+        TranscriptSegment(start=s["start"], end=s["end"], text=s["text"])
+        for s in data["segments"]
+    ]
+    return ChunkTranscription(window=window, segments=segments, raw_text=data["raw_text"])
+
+
+def _save_whisper_cache(video_path: Path, result: ChunkTranscription) -> None:
+    _WHISPER_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    cache_file = _whisper_cache_path(video_path, result.window)
+    data = {
+        "segments": [
+            {"start": s.start, "end": s.end, "text": s.text}
+            for s in result.segments
+        ],
+        "raw_text": result.raw_text,
+    }
+    cache_file.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
 def transcribe_chunk(
     model,
     video_path: Path,
@@ -244,6 +276,10 @@ def transcribe_chunk(
     -------
     ChunkTranscription mit Segmenten und vollständigem Text.
     """
+    cached = _load_whisper_cache(video_path, window)
+    if cached is not None:
+        return cached
+
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
         tmp_path = Path(tmp.name)
 
@@ -283,7 +319,9 @@ def transcribe_chunk(
         )
 
     raw_text = " ".join(s.text for s in segments)
-    return ChunkTranscription(window=window, segments=segments, raw_text=raw_text)
+    transcription = ChunkTranscription(window=window, segments=segments, raw_text=raw_text)
+    _save_whisper_cache(video_path, transcription)
+    return transcription
 
 
 def transcribe_chunks(

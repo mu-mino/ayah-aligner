@@ -2,8 +2,7 @@ import os
 import subprocess
 import asyncio
 
-start_id, end_id = 98, 99
-
+start_id, end_id = 83, 84
 cwd = os.getcwd()
 
 
@@ -19,43 +18,42 @@ async def run_process(text_file, audio, video, surah_id):
         video,
         "--surah",
         str(surah_id),
-        stdout=None,
-        stderr=None,
     )
     return process
 
 
-async def wait_for_processes(processes):
-    await asyncio.gather(*[p.wait() for p in processes])
+async def main():
+    processes = []
+
+    for proc, i in enumerate(range(start_id, end_id)):
+        text_file = subprocess.run(
+            f"find /home/muhammed-emin-eser/desk/din/quran/eng_translation/chunked_translation/ -type f -name '{i}_*'",
+            shell=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        video = subprocess.run(
+            f"find /home/muhammed-emin-eser/desk/din/quran/maher_workaround/Quran_cropped/ -type f -name '*({i})*'",
+            shell=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        audio = subprocess.run(
+            f"find /home/muhammed-emin-eser/desk/din/quran/maher_playlist/maher_playlist/ -type f -name '*({i})*'",
+            shell=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+
+        process = await run_process(text_file, audio, video, i)
+        processes.append(process)
+
+        print(f"running process with id {i}")
+
+        is_last = i == end_id - 1
+        if len(processes) == 13 or (is_last and processes):
+            await asyncio.gather(*[p.wait() for p in processes])
+            processes = []
 
 
-processes = []
-
-for proc, i in enumerate(range(start_id, end_id)):
-    text_file = subprocess.run(
-        f"find /home/muhammed-emin-eser/desk/din/quran/eng_translation/chunked_translation/ -type f -name '{i}_*'",
-        shell=True,
-        capture_output=True,
-        text=True,
-    ).stdout.strip()
-    video = subprocess.run(
-        f"find /home/muhammed-emin-eser/desk/din/quran/maher_workaround/Quran_cropped/ -type f -name '*({i})*'",
-        shell=True,
-        capture_output=True,
-        text=True,
-    ).stdout.strip()
-    audio = subprocess.run(
-        f"find /home/muhammed-emin-eser/desk/din/quran/maher_playlist/maher_playlist/ -type f -name '*({i})*'",
-        shell=True,
-        capture_output=True,
-        text=True,
-    ).stdout.strip()
-
-    process = asyncio.run(run_process(text_file, audio, video, surah_id=i))
-    processes.append(process)
-    print(f"running process with id {i}")
-
-    is_last = i == end_id - 1
-    if len(processes) == 13 or (is_last and processes):
-        asyncio.run(wait_for_processes(processes))
-        processes = []
+asyncio.run(main())

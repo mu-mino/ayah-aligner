@@ -142,21 +142,22 @@ class MatchResult:
 class GuardReport:
     """Ergebnis der Guard-Prüfung über alle Spans."""
 
-    order_passed: bool
+    # order_passed: bool
     completeness_passed: bool
-    order_violations: List[int] = field(default_factory=list)  # result-Indizes
+    # order_violations: List[int] = field(default_factory=list)  # result-Indizes
     uncovered_ranges: List[Tuple[int, int]] = field(
         default_factory=list
     )  # Lücken als (start, end)
     correction_hints: List[Tuple[int, str]] = field(
         default_factory=list
     )  # (chunk_idx, hint)
+    correction_data: List[Tuple[Tuple[int, int], str]] = field(default_factory=list)
 
-    @property
-    def passed(self) -> bool:
-        # completeness wird nicht verlangt: der nicht abgedeckte Suffix-Teil des Verses
-        # wird vom circle_window-Eintrag der nächsten Gruppe übernommen.
-        return self.order_passed
+    # @property
+    # def passed(self) -> bool:
+    # completeness wird nicht verlangt: der nicht abgedeckte Suffix-Teil des Verses
+    # wird vom circle_window-Eintrag der nächsten Gruppe übernommen.
+    # return self.order_passed
 
 
 @dataclass
@@ -343,30 +344,33 @@ def run_guard(results: List[MatchResult], verse_text: str) -> GuardReport:
         (Leerzeichen zwischen Spans werden toleriert).
     """
     if not results:
-        return GuardReport(order_passed=True, completeness_passed=True)
+        return GuardReport(completeness_passed=True)  # , order_passed=True )
 
-    order_violations: List[int] = []
-    first_start = results[0].span.start
-    prev_end = results[0].span.end
+    # order_violations: List[int] = []
+    # first_start = results[0].span.start
+    # prev_end = results[0].span.end
 
-    for i in range(1, len(results)):
-        span = results[i].span
-        end_ok = span.end >= prev_end
-        start_ok = span.start >= first_start
-        if not end_ok or not start_ok:
-            order_violations.append(i)
-        prev_end = max(prev_end, span.end)
+    # for i in range(1, len(results)):
+    #     span = results[i].span
+    # end_ok = span.end >= prev_end
+    # start_ok = span.start >= first_start
+    # if not end_ok or not start_ok:
+    #     order_violations.append(i)
+    # prev_end = max(prev_end, span.end)
 
     # Vollständigkeit: Lücken im Vers-Text ermitteln (Whitespace toleriert)
     sorted_spans = sorted(
         [(r.span.start, r.span.end) for r in results], key=lambda x: x[0]
     )
     uncovered: List[Tuple[int, int]] = []
+    correction_data = []
 
     if sorted_spans[0][0] > 0:
         prefix = verse_text[: sorted_spans[0][0]]
         if prefix.strip():
-            uncovered.append((0, sorted_spans[0][0]))
+            uncovered.append(
+                (0, sorted_spans[0][0])
+            )  # if uncovered is not last Element
 
     cursor = sorted_spans[0][0]
     for start, end in sorted_spans:
@@ -384,17 +388,17 @@ def run_guard(results: List[MatchResult], verse_text: str) -> GuardReport:
     # Static correction hints per violation, explaining why the selection is invalid.
     correction_hints: List[Tuple[int, str]] = []
 
-    for i in order_violations:
-        prev = results[i - 1]
-        curr = results[i]
-        correction_hints.append(
-            (
-                i,
-                f'Chunk [{i}] goes backward: chunk [{i - 1}] ends at "{prev.span.text}" '
-                f"(pos {prev.span.end}), but chunk [{i}] was placed at pos {curr.span.start}. "
-                f"Recitation always moves forward — a later audio chunk cannot match earlier text.",
-            )
-        )
+    # for i in order_violations:
+    #     prev = results[i - 1]
+    #     curr = results[i]
+    #     correction_hints.append(
+    #         (
+    #             i,
+    #             f'Chunk [{i}] goes backward: chunk [{i - 1}] ends at "{prev.span.text}" '
+    #             f"(pos {prev.span.end}), but chunk [{i}] was placed at pos {curr.span.start}. "
+    #             f"Recitation always moves forward — a later audio chunk cannot match earlier text.",
+    #         )
+    #     )
 
     for start, end in uncovered:
         gap_text = verse_text[start:end]
@@ -409,13 +413,15 @@ def run_guard(results: List[MatchResult], verse_text: str) -> GuardReport:
                 f"Every word of the verse must be assigned to a timestamp.",
             )
         )
+        correction_data.append([(start, end), gap_text])
 
     return GuardReport(
-        order_passed=len(order_violations) == 0,
+        # order_passed=len(order_violations) == 0,
         completeness_passed=len(uncovered) == 0,
-        order_violations=order_violations,
+        # order_violations=order_violations,
         uncovered_ranges=uncovered,
         correction_hints=correction_hints,
+        correction_data=correction_data,
     )
 
 

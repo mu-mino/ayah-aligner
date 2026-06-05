@@ -22,7 +22,8 @@ from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from pathlib import Path
 from typing import List, Optional, Tuple
-
+from typing import Tuple
+import spacy
 import regex
 
 from modules.whispertranscribe import ChunkTranscription
@@ -257,39 +258,82 @@ def _word_to_translation(arabic_word: str, verse_words: list) -> str:
     return text.strip()
 
 
-def _find_span_by_sequencematcher(
+nlp = spacy.blank("en")
+
+
+def _get_word_similarity(w1: str, w2: str) -> float:
+    """Prüft, ob zwei Wörter sich sehr ähnlich sind (z.B. disbelieve vs disbelievers)"""
+    # Einfacher, schneller Präfix- und Infix-Vergleich für Wortformen
+    w1_clean, w2_clean = w1.lower(), w2.lower()
+    if w1_clean == w2_clean:
+        return 1.0
+    # Erfasst Wortstämme (z.B. "disbeliev")
+    min_len = min(len(w1_clean), len(w2_clean))
+    if min_len > 4 and w1_clean[: min_len - 2] == w2_clean[: min_len - 2]:
+        return 0.8
+    return 0.0
+
+
+def find_semantic_span(
     query: str, full_translation: str
 ) -> Tuple[int, int, str, float]:
-    """
-    Findet den Substring in full_translation mit dem höchsten SequenceMatcher-Score
-    gegen query. Gleitet wortweise über den vollen Text (O(n²)).
-    """
-    words = full_translation.split()
-    if not words:
+    doc_a = nlp(query)
+    doc_b = nlp(full_translation)
+
+    # Bereinige die Query-Wörter (keine Satzzeichen)
+    query_words = [t.text for t in doc_a if not t.is_punct]
+    if not query_words or len(doc_b) == 0:
         return 0, len(full_translation), full_translation, 0.0
 
-    # Char-Offsets aufbauen
-    offsets: List[Tuple[int, int]] = []
-    cursor = 0
-    for word in words:
-        idx = full_translation.index(word, cursor)
-        offsets.append((idx, idx + len(word)))
-        cursor = idx + len(word)
+    best_score = -1.0
+    best_start_tok = 0
+    best_end_tok = len(doc_b)
 
-    n = len(words)
-    best_ratio = -1.0
-    best_start, best_end = 0, offsets[-1][1]
+    # Dynamisches Schiebefenster über die Wörter von Text B
+    # Das Fenster orientiert sich an der Länge der Query (mit etwas Puffer)
+    min_window = max(1, len(query_words) - 5)
+    max_window = min(len(doc_b), len(query_words) + 15)
 
-    for i in range(n):
-        for j in range(i + 1, n + 1):
-            span_text = full_translation[offsets[i][0] : offsets[j - 1][1]]
-            ratio = _rouge_l(query.lower(), span_text.lower())
-            if ratio > best_ratio:
-                best_ratio = ratio
-                best_start = offsets[i][0]
-                best_end = offsets[j - 1][1]
+    for window_size in range(min_window, max_window + 1):
+        for i in range(len(doc_b) - window_size + 1):
+            sub_span = doc_b[i : i + window_size]
 
-    return best_start, best_end, full_translation[best_start:best_end], best_ratio
+            # Zähhle, wie viele Wörter aus der Query wir in diesem Fenster wiederfinden
+            matched_words = 0
+            for qw in query_words:
+                # Prüfe, ob das Query-Wort (oder ein ähnliches) im Fenster existiert
+                if any(_get_word_similarity(qw, bw.text) > 0.7 for bw in sub_span):
+                    matched_words += 1
+
+            # Berechne die Dichte (F1-Ähnliche Gewichtung)
+            # Wie viel Prozent der Query haben wir gefunden, gestraft durch die Fensterlänge?
+            recall = matched_words / len(query_words)
+            precision = matched_words / window_size if window_size > 0 else 0
+
+            if recall + precision > 0:
+                # F1-Score belohnt Vollständigkeit bei gleichzeitig hoher Dichte
+                score = (2 * precision * recall) / (precision + recall)
+            else:
+                score = 0.0
+
+            # Bei Gleichstand bevorzugen wir das kleinere, präzisere Fenster
+            if score > best_score:
+                best_score = score
+                best_start_tok = i
+                best_end_tok = i + window_size
+            elif score == best_score and window_size < (best_end_tok - best_start_tok):
+                best_start_tok = i
+                best_end_tok = i + window_size
+
+    # Konvertiere Token-Indizes zurück zu exakten Zeichen-Indizes
+    start_token = doc_b[best_start_tok]
+    end_token = doc_b[best_end_tok - 1]
+
+    char_start = start_token.idx
+    char_end = end_token.idx + len(end_token.text)
+    span_text = full_translation[char_start:char_end]
+
+    return char_start, char_end, span_text, float(best_score)
 
 
 # ---------------------------------------------------------------------------
@@ -460,9 +504,7 @@ def run_matching(
                 translations.append(translation)
 
         query = " ".join(translations)
-        char_start, char_end, span_text, score = _find_span_by_sequencematcher(
-            query, verse_text
-        )
+        char_start, char_end, span_text, score = find_semantic_span(query, verse_text)
         session.results.append(
             MatchResult(
                 chunk=chunk,

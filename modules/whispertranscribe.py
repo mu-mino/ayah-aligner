@@ -227,10 +227,15 @@ def load_model(
 
 
 def _whisper_cache_path(video_path: Path, window: FrameWindow) -> Path:
-    return _WHISPER_CACHE_DIR / f"{video_path.stem}_{window.start_sec:.3f}_{window.end_sec:.3f}.json"
+    return (
+        _WHISPER_CACHE_DIR
+        / f"{video_path.stem}_{window.start_sec:.3f}_{window.end_sec:.3f}.json"
+    )
 
 
-def _load_whisper_cache(video_path: Path, window: FrameWindow) -> Optional[ChunkTranscription]:
+def _load_whisper_cache(
+    video_path: Path, window: FrameWindow
+) -> Optional[ChunkTranscription]:
     cache_file = _whisper_cache_path(video_path, window)
     if not cache_file.exists():
         return None
@@ -239,7 +244,9 @@ def _load_whisper_cache(video_path: Path, window: FrameWindow) -> Optional[Chunk
         TranscriptSegment(start=s["start"], end=s["end"], text=s["text"])
         for s in data["segments"]
     ]
-    return ChunkTranscription(window=window, segments=segments, raw_text=data["raw_text"])
+    return ChunkTranscription(
+        window=window, segments=segments, raw_text=data["raw_text"]
+    )
 
 
 def _save_whisper_cache(video_path: Path, result: ChunkTranscription) -> None:
@@ -247,12 +254,13 @@ def _save_whisper_cache(video_path: Path, result: ChunkTranscription) -> None:
     cache_file = _whisper_cache_path(video_path, result.window)
     data = {
         "segments": [
-            {"start": s.start, "end": s.end, "text": s.text}
-            for s in result.segments
+            {"start": s.start, "end": s.end, "text": s.text} for s in result.segments
         ],
         "raw_text": result.raw_text,
     }
-    cache_file.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    cache_file.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
 
 
 def transcribe_chunk(
@@ -319,7 +327,9 @@ def transcribe_chunk(
         )
 
     raw_text = " ".join(s.text for s in segments)
-    transcription = ChunkTranscription(window=window, segments=segments, raw_text=raw_text)
+    transcription = ChunkTranscription(
+        window=window, segments=segments, raw_text=raw_text
+    )
     _save_whisper_cache(video_path, transcription)
     return transcription
 

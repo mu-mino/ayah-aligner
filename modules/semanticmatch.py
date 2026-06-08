@@ -27,7 +27,9 @@ import spacy
 import regex
 
 from modules.whispertranscribe import ChunkTranscription
+from sentence_transformers import SentenceTransformer, util
 
+model = SentenceTransformer("symanto/sn-xlm-roberta-base-snli-mnli-anli-xnli")
 # ---------------------------------------------------------------------------
 # Scoring helpers
 # ---------------------------------------------------------------------------
@@ -362,12 +364,27 @@ def _fill_gaps(results: List[MatchResult], verse_text: str) -> None:
     for i in range(1, len(by_start)):
         prev = by_start[i - 1]
         curr = by_start[i]
-        if (
-            curr.span.start > prev.span.end
-            and verse_text[prev.span.end : curr.span.start].strip()
-        ):
-            prev.span.end = curr.span.start
-            prev.span.text = verse_text[prev.span.start : prev.span.end]
+        if verse_text[prev.span.end : curr.span.start].strip():
+            english_gap_text = verse_text[prev.span.end : curr.span.start].strip()
+            arabic_text_prev = prev.chunk.raw_text
+            arabic_text_curr = curr.chunk.raw_text
+
+            # Embeddings (Vektoren) für die Texte generieren
+            emb_english = model.encode(english_gap_text, convert_to_tensor=True)
+            emb_prev = model.encode(arabic_text_prev, convert_to_tensor=True)
+            emb_curr = model.encode(arabic_text_curr, convert_to_tensor=True)
+
+            # Ähnlichkeit berechnen
+            score_prev = util.cos_sim(emb_english, emb_prev).item()
+            score_curr = util.cos_sim(emb_english, emb_curr).item()
+
+            # --- DECISION MAKING (ENTSCHEIDUNG) ---
+            if score_prev > score_curr:
+                prev.span.end = curr.span.start
+                prev.span.text = verse_text[prev.span.start : prev.span.end]
+            else:
+                curr.span.start = prev.span.end
+                curr.span.text = verse_text[curr.span.start : curr.span.end]
 
 
 # ---------------------------------------------------------------------------
@@ -492,7 +509,7 @@ def run_matching(
     session = MatchSession(verse_text=verse_text)
 
     if not chunks:
-        session.guard = GuardReport(order_passed=True, completeness_passed=True)
+        session.guard = GuardReport(completeness_passed=True)
         return session
 
     for chunk in chunks:

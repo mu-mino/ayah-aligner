@@ -302,7 +302,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--output",
-        default=str(BASE_DIR / "output"),
+        default=str(BASE_DIR / "output" / "mapping"),
         type=Path,
         help="Ausgabeverzeichnis (Dateiname wird aus --text abgeleitet)",
     )

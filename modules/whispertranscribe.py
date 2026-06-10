@@ -5,7 +5,6 @@ Dieses Modul wird vom Orchestrierungs-Modul aufgerufen, wenn
 recognizecircle innerhalb eines circlelog-Intervalls Frames mit
 0 Kreisen findet. In diesem Fall liefert videowindow die Sub-Fenster
 (Häppchen) des betroffenen Intervalls als FrameWindow-Objekte.
-
 Dieses Modul:
     1. Extrahiert die Audio jedes Häppchens aus dem Video (via ffmpeg).
     2. Übergibt sie an WhisperX (Sprache: Arabisch, Modell: large-v2).

@@ -386,6 +386,20 @@ def _fill_gaps(results: List[MatchResult], verse_text: str) -> None:
                 curr.span.start = prev.span.end
                 curr.span.text = verse_text[curr.span.start : curr.span.end]
 
+            # --- SATZZEICHEN-KORREKTUR (Waisen-Zeichen verhindern) ---
+            # Regex erfasst alle gängigen Satzzeichen und Symbole (auch ASS-Tags falls nötig, hier primär Interpunktion)
+            # r"^[^\w\s]" matcht: Wenn das allererste Zeichen KEIN Buchstabe/Zahl (\w) und KEIN Leerzeichen (\s) ist.
+            if curr.span.text and re.match(r"^[^\w\s]", curr.span.text.strip()):
+                symbol = curr.span.text[0]
+
+                # curr kürzen
+                curr.span.text = curr.span.text[1:]
+                curr.span.start += 1
+
+                # prev erweitern
+                prev.span.text = prev.span.text + symbol
+                prev.span.end += 1
+
 
 # ---------------------------------------------------------------------------
 # Guard

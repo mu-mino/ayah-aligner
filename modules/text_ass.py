@@ -207,99 +207,150 @@ COLOR_MAP = {
 }
 
 SYSTEM_PROMPT = """You are a strict, conservative annotation selector.CRITICAL RULE:- Word extraction and categorization is COMPLETELY OPTIONAL.- It is significantly better to return an EMPTY list than to include a doubtful or incorrect word. - Never force a word into a category just to fill the JSON. If a text contains NO clear matches for the categories, you MUST return an empty labels array.TASK:Analyze the input text and select ONLY words that clearly, directly, and without ambiguity belong to one of the specified categories.CATEGORIES & CRITERIA:- GOD: Direct names or explicit synonyms for the deity (e.g., Allah, God, Lord). Do NOT include chapter names, placeholders, pronouns, or surrounding nouns.- DESTRUCTIVE: Words expressing explicit destruction, damage, sin, or severe negativity (e.g., destroy, death, torment, cursed).- CONSTRUCTIVE: Words expressing creation, purification, reward, or explicit positivity (e.g., create, purify, patience, blessings).OUTPUT RULES:- You DO NOT modify, capitalize, or rewrite text.- You only select exact WORDS from the input text.- Do NOT output any conversational text, explanations, thoughts, or formatting blocks before or after the JSON.- Return ONLY valid JSON adhering strictly to this format:{  "labels": [    {"word": "exact_word_from_text", "category": "GOD|DESTRUCTIVE|CONSTRUCTIVE"}  ]}NEGATIVE EXAMPLE (How to handle empty cases):Input: "The cloaked one refers to the Prophet Muhammad who used to pray in a cave."Output:{  "labels": []}"""
+
 # fmt: off
-_GOD_KEYS=["allah","god","lord","albarr","allmighty","allmighty","all-mighty","allknower","allknower","all-knower","allwise","allwise","all-wise","allhearer","allhearer","all-hearer","allseer","allseer","all-seer","allaware","all-aware","allprovider","all-provider","allstrong","all-strong","allknowing","all-knowing","allcapable","all-capable","mostbeneficent","mostmerciful","mostgreat","mosthigh","mostgenerous","mostkind","mostjust","mostnear","oftforgiving","oft-forgiving","omnipotentking","supremecreator","realbestower","ownerofpower",]
-    
+_GOD_KEYS=["allah","god","lord","albarr","allmighty","allmighty","all-mighty","allknower","allknower","all-knower","allwise","allwise","all-wise","allhearer","allhearer","all-hearer","allseer","allseer","all-seer","allaware","allaware","all-aware","allprovider","all-provider","allstrong","all-strong","allknowing","all-knowing","allcapable","all-capable","mostbeneficent","mostmerciful","mostgreat","mosthigh","mostgenerous","mostkind","mostjust","mostnear","oftforgiving","oft-forgiving","omnipotentking","supremecreator","realbestower","ownerofpower","all-just","all-forgiving","all-merciful","all-compassionate","all-majestic","all-glorious","mostholy","mostcompassionate","thebeneficent","themerciful","theforgiving","thejust","themighty","thewise","theliving","theeternal","thesubduer","theavenger"]
+
+_GOD_BASES = [
+    "mighty", "merciful", "beneficent", "great", "high", "generous", "kind",
+    "just", "near", "forgiving", "wise", "knower", "hearer", "seer", "aware",
+    "provider", "strong", "knowing", "capable", "holy", "compassionate",
+    "majestic", "glorious", "living", "eternal", "subduer", "avenger", "barr"
+]
+
+# Spezielle Eigennamen (kein Präfix nötig)
+_GOD_PROPER = [
+    "allah", "god", "lord", "albarr", "omnipotentking", "supremecreator",
+    "realbestower", "ownerofpower"
+]
+
 REFERENCE_THEMES = {
     "GOD": re.compile(
-        r"^(?:the\s+)?("
-        + "|".join(k.replace(" ", r"\s*").replace("-", r"-?") for k in _GOD_KEYS)
-        + r")$",
-        re.IGNORECASE,
+        r"^(?:"
+        # 1. Eigennamen (allein stehend)
+        r"(?:allah|god|lord|albarr|omnipotentking|supremecreator|realbestower|ownerofpower)"
+        r"|"
+        # 2. Englische attributive Namen (müssen 'the' oder 'all'/'most' haben)
+        r"(?:(?:the\s+)?(?:all|most|oft)[- ]?"
+        r"(?:mighty|merciful|beneficent|great|high|generous|kind|just|near|"
+        r"forgiving|wise|knower|hearer|seer|aware|provider|strong|knowing|"
+        r"capable|holy|compassionate|majestic|glorious|living|eternal|subduer|"
+        r"avenger|sustainer|gracious|faithful|forbearing|magnificent|appreciative|"
+        r"preserver|reckoner|watchful|responsive|embracing|loving|resurrector|"
+        r"witness|truth|trustee|firm|friend|praiseworthy|originator|restorer|"
+        r"giver\s+of\s+life|taker\s+of\s+life|self[- ]subsisting|finder|one|"
+        r"unique|able|determined|expediter|delayer|first|last|manifest|hidden|"
+        r"patron|self[- ]exalted|source\s+of\s+goodness|acceptor\s+of\s+repentance|"
+        r"pardoner|kind|compeller|opener|withholder|expander|abaser|exalter|"
+        r"honorer|dishonorer|judge|subtle))"
+        r"|"
+        # 3. Arabische Transliterationen (flexibel mit Artikel)
+        r"(?:(?:al|ar|as|at|az|ad|ah|ak|aq|am|an|aw)[- ]?)?"
+        r"(?:rahman|rahim|malik|quddus|salam|mu?min|aziz|jabbar|mutakabbir|"
+        r"khaliq|bari(?:')?|musawwir|ghaffar|qahhar|wahhab|razzaq|fattah|"
+        r"alim|qabid|basit|khafid|rafi(?:')?|mu(?:i|')zz|mudhill|sami(?:')?|"
+        r"basir|hakam|adl|latif|khabir|halim|azim|ghafur|shakur|ali(?:')?|"
+        r"kabir|hafiz|muqit|hasib|jalil|karim|raqib|mujib|wasi(?:')?|hakim|"
+        r"wadud|majid|ba(?:i|')th|shahid|haqq|wakil|qawi|matin|wali(?:')?|"
+        r"hamid|muhsi(?:')?|mubdi(?:')?|mu(?:i|')d|muhyi(?:')?|mumit|hayy|"
+        r"qayyum|wajid|wahid|ahad|samad|qadir|muqtadir|muqaddim|mu(?:a|')khkhir|"
+        r"awwal|akhir|zahir|batin|muta(?:'|a)li|barr|tawwab|muntaqim|"
+        r"afuww|ra(?:u|')f)"
+        r")$",
+        re.IGNORECASE
     ),
     
     # Key exakt wie in Ihrer Vorgabe beibehalten (inkl. des Tippfehlers, um Kompatibilität zu wahren)
     "DESTRUCITVE": re.compile(
-        r"^("
-        # Jenseitsstrafen & Höllenbezeichnungen (Erweitert um Gehenna & Jahannam sowie spezifische Qualen)
-        r"hell(?:fire)?|blaze|blazing\s+fire|burning\s+fire|torment\w*|chastis\w*|punish\w*|tortur\w*|scourge\w*|doom\w*|disgrace\w*|"
-        r"gehenna|jahannam|abyss|furnace|boiling\s+water|fetters|chains|"
-        # Göttlicher Zorn & Vernichtung (Erweitert um Zorn, Vergeltung und Untergang)
-        r"strik\w*|seiz\w*|destroy\w*|destruct\w*|curs\w*|reject\w*|belying|belied|wrath|anger|retribution|vengeance|penalty|calamity|ruin\w*|perish\w*|overthrow\w*|"
-        # Beschreibende Adjektive des Schmerzes
-        r"painful|severe|grievous|miserable|awful|dreadful|terrible|heavy|wretched|wicked|painful|scorching|"
-        # Fehlverhalten, Sünde & Ablehnung (Erweitert um Heuchelei, Unglaube und unfehlbare Täterbezeichnungen)
-        r"disbeliev\w*|unbeliev\w*|wrongdoer\w*|polytheist\w*|sinner\w*|arrogant\w*|transgress\w*|hypocri\w*|evildoer\w*|disobedien\w*|rebel\w*|insolent\w*|infidel\w*|idolater\w*|misguid\w*|stray\w*"
-        r")$"
-        r"|saqar|saqr|hutamah|hutamah|laz[aā]\w*|jah[iī]m|sa[iī]r|haawiyah|h[aaā]wiyah|"
-        r"zaqqum|zaqq[ou]*m|ghisl[iī]n|ghass[aa]*q|ham[iī]m|"
-        r"fir['`]?[aā]wn\w*|pharaoh\w*|"
-        r"tham[uū]d\w*|samood\w*|"
-        r"(?:['`]?)?aad\w*|"
-        r"madyan\w*|midianit\w*|"
-        r"q[aaā]r[uū]n\w*|korah\w*|"
-        r"ab[uū]\s+lahab|lahab\w*|"
-        r"nimrod\w*|"
-        r"sting\w*|miser\w*|miserl\w*|"
-        r"boast\w*|vainglor\w*|"
-        r"slander\w*|backbit\w*|"
-        r"mock\w*|ridicul\w*|"
-        r"corrupt\w*|corrupter\w*|"
-        r"oppress\w*|oppressor\w*|"
-        r"tyrann\w*|"
-        r"ingrat\w*|ungrateful\w*|"
-        r"deceiv\w*|decepti\w*|"
-        r"heedless\w*|"
-        r"greed\w*|avaric\w*|covet\w*|"
-        r"nif[aaā]q\w*|mun[aaā]fiq\w*|"
-        r"shirk\w*|mushrik\w*|mushrik[ou]n|"
-        r"bagh[yī]\w*|"
-        r"fas[aaā]d\w*|mufsid\w*|"
-        r"rijs\w*|rijz\w*|"
-        r"najis\w*|"
-        r"fitnah\w*",
-        re.IGNORECASE,
-        ),
+    r"^("
+    # Jenseitsstrafen & Höllenbezeichnungen
+    r"hell(?:fire)?|blaze|blazing\s+fire|burning\s+fire|torment\w*|chastis\w*|punish\w*|tortur\w*|scourge\w*|doom\w*|disgrace\w*|"
+    r"gehenna|jahannam|abyss|furnace|boiling\s+water|fetters|chains|"
+    # Göttlicher Zorn & Vernichtung
+    r"strik\w*|seiz\w*|destroy\w*|destruct\w*|curs\w*|reject\w*|belying|belied|wrath|anger|retribution|vengeance|penalty|calamity|ruin\w*|perish\w*|overthrow\w*|"
+    # Beschreibende Adjektive des Schmerzes
+    r"painful|severe|grievous|miserable|awful|dreadful|terrible|heavy|wretched|wicked|scorching|"
+    # Fehlverhalten, Sünde & Ablehnung
+    r"disbeliev\w*|unbeliev\w*|wrongdoer\w*|polytheist\w*|sinner\w*|arrogant\w*|transgress\w*|hypocri\w*|evildoer\w*|disobedien\w*|rebel\w*|insolent\w*|infidel\w*|idolater\w*|misguid\w*|stray\w*|"
+    r"blasphem\w*|envy|envious|hatred|malice|regret\w*|remorse\w*|despair\w*"
+    r")$"
+    r"|saqar|saqr|hutamah|laz[aā]\w*|jah[iī]m|sa[iī]r|haawiyah|h[aaā]wiyah|"
+    r"zaqqum|zaqq[ou]*m|ghisl[iī]n|ghass[aa]*q|ham[iī]m|"
+    r"sijjin|sijji[n]|al-sijjin|"
+    r"dari\w*|dhar[iī]\w*|samum\w*|samoom\w*|dukhan\w*|"
+    r"fir['`]?[aā]wn\w*|pharaoh\w*|"
+    r"tham[uū]d\w*|samood\w*|"
+    r"(?:['`]?)?aad\w*|"
+    r"madyan\w*|midianit\w*|"
+    r"q[aaā]r[uū]n\w*|korah\w*|"
+    r"ab[uū]\s+lahab|lahab\w*|"
+    r"nimrod\w*|"
+    r"sodom\w*|gomorrah\w*|tubba\w*|"
+    r"sting\w*|miser\w*|miserl\w*|"
+    r"boast\w*|vainglor\w*|"
+    r"slander\w*|backbit\w*|"
+    r"mock\w*|ridicul\w*|"
+    r"corrupt\w*|corrupter\w*|"
+    r"oppress\w*|oppressor\w*|"
+    r"tyrann\w*|"
+    r"ingrat\w*|ungrateful\w*|"
+    r"deceiv\w*|decepti\w*|"
+    r"heedless\w*|"
+    r"greed\w*|avaric\w*|covet\w*|"
+    r"nif[aaā]q\w*|mun[aaā]fiq\w*|"
+    r"shirk\w*|mushrik\w*|mushrik[ou]n|"
+    r"bagh[yī]\w*|"
+    r"fas[aaā]d\w*|mufsid\w*|"
+    r"rijs\w*|rijz\w*|"
+    r"najis\w*|"
+    r"fitnah\w*",
+    re.IGNORECASE,
+),
         
     "CONSTRUCTIVE": re.compile(
-        r"^("
-        # Jenseitsbelohnungen & Paradies (Erweitert um Eden, Firdaus und arabische Kernbegriffe der Sicherheit)
-        r"paradise|garden\w*|eden|jannah|firdaus|abode\s+of\s+peace|"
-        # Göttliche Attribute der Rettung & Führung (Erweitert um Gnade, Huld und Erleuchtung)
-        r"light|peace|bliss|mercy|grace|glor\w*|victory|victor\w*|bount\w*|favor\w*|salvation|prosperity|"
-        # Handlungen der Vergebung & Rettung
-        r"forgiv\w*|pardon\w*|guid\w*|purif\w*|save\w*|admit\w*|reward\w*|rejoic\w*|triumph\w*|bless\w*|"
-        # Positive qualitative Zustände
-        r"beautiful|pure|eternal|successful|radiant|noble|trustworthy|truth|glorio\w*|content\w*|"
-        # Die Gemeinschaft der Rechtgeleiteten (Erweitert um Gottergebenheit, Geduld und gottesfürchtige Kernbegriffe)
-        r"believer\w*|righteous\w*|pious|humble|muttaqoon|muslim\w*|submitter\w*|patient|steadfast\w*|devout\w*|repent\w*|good-doer\w*|truthful"
-        r")$"
-        r"|kawthar\w*|"
-        r"tasn[iī]m\w*|"
-        r"salsab[iī]l\w*|"
-        r"sidrat\w*|sidrah\w*|"
-        r"illiyy[iī]n\w*|"
-        r"ridw[aaā]n\w*|"
-        r"sak[iī]nah\w*|"
-        r"shukr\w*|shakir\w*|shak[uu]r\w*|grateful\w*|thankful\w*|"
-        r"ikhl[aaā]s\w*|sincere\w*|sincerity|"
-        r"taqw[aaā]\w*|god[- ]fearing|god[- ]conscious|"
-        r"ihs[aaā]n\w*|muhsin\w*|excellent\w*|"
-        r"salih\w*|s[aā]lih\w*|"
-        r"aww[aaā]b\w*|"
-        r"martyr\w*|shah[iī]d\w*|shuhad[aa]*\w*|"
-        r"muqarrab\w*|near[- ]brought|nearest\s+to\s+allah|"
-        r"jibr[iī]l\w*|gabrie?l\w*|"
-        r"m[iī]k[aaā]l\w*|michae?l\w*|"
-        r"ridwan\w*|"
-        r"guardian[- ]angel\w*|"
-        r"keepers?\s+of\s+paradise|"
-        r"companions?\s+of\s+the\s+right|"
-        r"people\s+of\s+the\s+right|"
-        r"right[- ]handed|"
-        r"sidd[iī]q\w*|truthful[- ]one\w*",
-        re.IGNORECASE,
-        ),
+    r"^("
+    # Jenseitsbelohnungen & Paradies
+    r"paradise|garden\w*|eden|jannah|firdaus|abode\s+of\s+peace|"
+    # Göttliche Attribute der Rettung & Führung
+    r"light|peace|bliss|mercy|grace|glor\w*|victory|victor\w*|bount\w*|favor\w*|salvation|prosperity|"
+    # Handlungen der Vergebung & Rettung
+    r"forgiv\w*|pardon\w*|guid\w*|purif\w*|save\w*|admit\w*|reward\w*|rejoic\w*|triumph\w*|bless\w*|"
+    # Positive qualitative Zustände
+    r"beautiful|pure|eternal|successful|radiant|noble|trustworthy|truth|glorio\w*|content\w*|"
+    # Die Gemeinschaft der Rechtgeleiteten
+    r"believer\w*|righteous\w*|pious|humble|muttaqoon|muslim\w*|submitter\w*|patient|steadfast\w*|devout\w*|repent\w*|good-doer\w*|truthful|"
+    r"qanit\w*|sabir\w*|tawwab\w*|"
+    r"tawakkul\w*|sabr\w*|rid[aaā]\w*|contentment\w*"
+    r")$"
+    r"|kawthar\w*|"
+    r"tasn[iī]m\w*|"
+    r"salsab[iī]l\w*|"
+    r"ma['`]?i[nī]?n\w*|zanjab[iī]l\w*|kaf[uū]r\w*|salhab\w*|"
+    r"israfil\w*|azra['`]?il\w*|harut\w*|marut\w*|"
+    r"houri\w*|hur\w*|"
+    r"sidrat\w*|sidrah\w*|"
+    r"illiyy[iī]n\w*|"
+    r"ridw[aaā]n\w*|"
+    r"sak[iī]nah\w*|"
+    r"shukr\w*|shakir\w*|shak[uu]r\w*|grateful\w*|thankful\w*|"
+    r"ikhl[aaā]s\w*|sincere\w*|sincerity|"
+    r"taqw[aaā]\w*|god[- ]fearing|god[- ]conscious|"
+    r"ihs[aaā]n\w*|muhsin\w*|excellent\w*|"
+    r"salih\w*|s[aā]lih\w*|"
+    r"aww[aaā]b\w*|"
+    r"martyr\w*|shah[iī]d\w*|shuhad[aa]*\w*|"
+    r"muqarrab\w*|near[- ]brought|nearest\s+to\s+allah|"
+    r"jibr[iī]l\w*|gabrie?l\w*|"
+    r"m[iī]k[aaā]l\w*|michae?l\w*|"
+    r"ridwan\w*|"
+    r"guardian[- ]angel\w*|"
+    r"keepers?\s+of\s+paradise|"
+    r"companions?\s+of\s+the\s+right|"
+    r"people\s+of\s+the\s+right|"
+    r"right[- ]handed|"
+    r"sidd[iī]q\w*|truthful[- ]one\w*",
+    re.IGNORECASE,
+),
 }
 
 mock_json="""{"labels":[{"word":"Al-Muddathir","category":"GOD"},{"word":"ARISE","category":"CONSTRUCTIVE"},{"word":"WARN","category":"DESTRUCTIVE"},{"word":"ALLAH","category":"GOD"},{"word":"purify","category":"CONSTRUCTIVE"},{"word":"Ar-Rujz","category":"DESTRUCTIVE"},{"word":"give","category":"CONSTRUCTIVE"},{"word":"deeds","category":"CONSTRUCTIVE"},{"word":"obedience","category":"CONSTRUCTIVE"},{"word":"patient","category":"CONSTRUCTIVE"},{"word":"transgressors","category":"DESTRUCTIVE"},{"word":"Allah","category":"GOD"},{"word":"Trumpet","category":"DESTRUCTIVE"},{"word":"gather","category":"CONSTRUCTIVE"},{"word":"Hard","category":"DESTRUCTIVE"},{"word":"disbelievers","category":"DESTRUCTIVE"},{"word":"Al-Waleed","category":"GOD"},{"word":"bin","category":"GOD"},{"word":"Al-Mugheerah","category":"GOD"},{"word":"Al-Makhzoomee","category":"GOD"},{"word":"granted","category":"CONSTRUCTIVE"},{"word":"abundance","category":"CONSTRUCTIVE"},{"word":"smooth","category":"CONSTRUCTIVE"},{"word":"comfortable","category":"CONSTRUCTIVE"},{"word":"God","category":"GOD"},{"word":"strength","category":"CONSTRUCTIVE"},{"word":"rock","category":"CONSTRUCTIVE"},{"word":"hills","category":"CONSTRUCTIVE"},{"word":"understanding","category":"CONSTRUCTIVE"},{"word":"formed","category":"CONSTRUCTIVE"},{"word":"stubborn","category":"DESTRUCTIVE"},{"word":"opposing","category":"DESTRUCTIVE"},{"word":"torment","category":"DESTRUCTIVE"},{"word":"Verily","category":"GOD"},{"word":"cursed","category":"DESTRUCTIVE"},{"word":"plotted","category":"DESTRUCTIVE"},{"word":"plot","category":"DESTRUCTIVE"},{"word":"god","category":"GOD"},{"word":"create","category":"CONSTRUCTIVE"},{"word":"destroy","category":"DESTRUCTIVE"},{"word":"life","category":"CONSTRUCTIVE"},{"word":"death","category":"DESTRUCTIVE"},{"word":"frowned","category":"DESTRUCTIVE"}]}"""

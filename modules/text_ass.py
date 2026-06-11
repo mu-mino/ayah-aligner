@@ -278,14 +278,30 @@ REFERENCE_THEMES = {
     ),
 }
 
+mock_json = {
+    "labels": [
+        {"word": "Allah", "category": "GOD"},
+        {"word": "conquest", "category": "DESTRUCTIVE"},
+        {"word": "multitudes", "category": "CONSTRUCTIVE"},
+        {"word": "praises", "category": "CONSTRUCTIVE"},
+        {"word": "Merciful", "category": "GOD"},
+        {"word": "Allahs", "category": "GOD"},
+        {"word": "Islam", "category": "GOD"},
+        {"word": "Verily", "category": "GOD"},
+        {"word": "He", "category": "GOD"},
+        {"word": "forgives", "category": "CONSTRUCTIVE"},
+    ]
+}
+
 
 def classify_sentence(sentence: str):
-    prompt = f"{SYSTEM_PROMPT}\n\nTEXT:\n{sentence}\n"
-    output = LLM(prompt, max_tokens=256, temperature=0.0)
-    text = output["choices"][0]["text"]
-    print(text)
+    # prompt = f"{SYSTEM_PROMPT}\n\nTEXT:\n{sentence}\n"
+    # output = LLM(prompt, max_tokens=256, temperature=0.0)
+    # text = output["choices"][0]["text"]
+    # print(text)
+
     try:
-        return json.loads(text).get("labels", [])
+        return json.loads(mock_json).get("labels", [])
     except Exception:
         return []
 
@@ -402,7 +418,10 @@ def build_ass(
         txt = wrap_ass_text(styled_text, width, font_size)
         txt = karaoke_reveal_words(txt)
 
-        x, y = int(width * 0.5), int(height * 0.75)
+        x, y = (
+            int(width * 0.5),
+            int(height * (0.72 if (txt.count(r"\N") + 1) == 5 else 0.75)),
+        )
 
         if i == 0 and treat_first_as_header:
             header_font_size = int(font_size * 1.25)

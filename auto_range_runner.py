@@ -6,6 +6,7 @@ from mapping import BASE_DIR
 from pathlib import Path
 
 start_id, end_id = 110, 111
+
 cwd = os.getcwd()
 
 

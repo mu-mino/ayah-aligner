@@ -5,7 +5,7 @@ import asyncio
 from mapping import BASE_DIR
 from pathlib import Path
 
-start_id, end_id = 110, 111
+start_id, end_id = 74, 75
 
 cwd = os.getcwd()
 
@@ -79,11 +79,11 @@ async def process_pipeline(i):
     ).stdout.strip()
 
     # 1. Mapping prüfen
-    p_mapping = await run_mapping(translation_file, audio, cropped_video, i)
-    if p_mapping.returncode != 0:
-        raise RuntimeError(
-            f"Pipeline {i}: mapping.py fehlgeschlagen mit Exit-Code {p_mapping.returncode}"
-        )
+    # p_mapping = await run_mapping(translation_file, audio, cropped_video, i)
+    # if p_mapping.returncode != 0:
+    #     raise RuntimeError(
+    #         f"Pipeline {i}: mapping.py fehlgeschlagen mit Exit-Code {p_mapping.returncode}"
+    #     )
 
     mapping_file = subprocess.run(
         f"find {BASE_DIR}/output/mapping/ -type f -name '{i}_*'",

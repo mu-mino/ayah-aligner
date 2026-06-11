@@ -203,71 +203,12 @@ ALLOWED_LABELS = ["GOD", "DESTRUCTIVE", "CONSTRUCTIVE"]
 COLOR_MAP = {
     "GOD": "&H75DFFA&",  # Majestätisches Gelbgold
     "DESTRUCTIVE": "&H6212B2&",  # Alarmierendes Hellrot
-    "CONSTRUCTIVE": "&HA137FF&",  # Leuchtendes Pink
+    "CONSTRUCTIVE": "&H803500&",  # Blau
 }
 
-SYSTEM_PROMPT = """
-You are a strict annotation selector.
-
-You DO NOT modify or rewrite text.
-
-You only select WORDS from the input sentence.
-
-Return ONLY valid JSON.
-
-OUTPUT FORMAT:
-{
-  "labels": [
-    {"word": "word_from_text", "category": "GOD|DESTRUCTIVE|CONSTRUCTIVE"}
-  ]
-}"""
-
-_GOD_KEYS = [
-    "allah",
-    "god",
-    "lord",
-    "albarr",
-    "all mighty",
-    "allmighty",
-    "all-mighty",
-    "all knower",
-    "allknower",
-    "all-knower",
-    "all wise",
-    "allwise",
-    "all-wise",
-    "all hearer",
-    "allhearer",
-    "all-hearer",
-    "all seer",
-    "allseer",
-    "all-seer",
-    "all aware",
-    "all-aware",
-    "all provider",
-    "all-provider",
-    "all strong",
-    "all-strong",
-    "all knowing",
-    "all-knowing",
-    "all capable",
-    "all-capable",
-    "most beneficent",
-    "most merciful",
-    "most great",
-    "most high",
-    "most generous",
-    "most kind",
-    "most just",
-    "most near",
-    "oft forgiving",
-    "oft-forgiving",
-    "omnipotent king",
-    "supreme creator",
-    "real bestower",
-    "owner of power",
-]
-
+SYSTEM_PROMPT = """You are a strict, conservative annotation selector.CRITICAL RULE:- Word extraction and categorization is COMPLETELY OPTIONAL.- It is significantly better to return an EMPTY list than to include a doubtful or incorrect word. - Never force a word into a category just to fill the JSON. If a text contains NO clear matches for the categories, you MUST return an empty labels array.TASK:Analyze the input text and select ONLY words that clearly, directly, and without ambiguity belong to one of the specified categories.CATEGORIES & CRITERIA:- GOD: Direct names or explicit synonyms for the deity (e.g., Allah, God, Lord). Do NOT include chapter names, placeholders, pronouns, or surrounding nouns.- DESTRUCTIVE: Words expressing explicit destruction, damage, sin, or severe negativity (e.g., destroy, death, torment, cursed).- CONSTRUCTIVE: Words expressing creation, purification, reward, or explicit positivity (e.g., create, purify, patience, blessings).OUTPUT RULES:- You DO NOT modify, capitalize, or rewrite text.- You only select exact WORDS from the input text.- Do NOT output any conversational text, explanations, thoughts, or formatting blocks before or after the JSON.- Return ONLY valid JSON adhering strictly to this format:{  "labels": [    {"word": "exact_word_from_text", "category": "GOD|DESTRUCTIVE|CONSTRUCTIVE"}  ]}NEGATIVE EXAMPLE (How to handle empty cases):Input: "The cloaked one refers to the Prophet Muhammad who used to pray in a cave."Output:{  "labels": []}"""
+# fmt: off
+_GOD_KEYS=["allah","god","lord","albarr","allmighty","allmighty","all-mighty","allknower","allknower","all-knower","allwise","allwise","all-wise","allhearer","allhearer","all-hearer","allseer","allseer","all-seer","allaware","all-aware","allprovider","all-provider","allstrong","all-strong","allknowing","all-knowing","allcapable","all-capable","mostbeneficent","mostmerciful","mostgreat","mosthigh","mostgenerous","mostkind","mostjust","mostnear","oftforgiving","oft-forgiving","omnipotentking","supremecreator","realbestower","ownerofpower",]
 # Unumstößliche Regex-Listen (allgemeingültig vor der KI)
 REFERENCE_THEMES = {
     "GOD": re.compile(
@@ -278,20 +219,8 @@ REFERENCE_THEMES = {
     ),
 }
 
-mock_json = {
-    "labels": [
-        {"word": "Allah", "category": "GOD"},
-        {"word": "conquest", "category": "DESTRUCTIVE"},
-        {"word": "multitudes", "category": "CONSTRUCTIVE"},
-        {"word": "praises", "category": "CONSTRUCTIVE"},
-        {"word": "Merciful", "category": "GOD"},
-        {"word": "Allahs", "category": "GOD"},
-        {"word": "Islam", "category": "GOD"},
-        {"word": "Verily", "category": "GOD"},
-        {"word": "He", "category": "GOD"},
-        {"word": "forgives", "category": "CONSTRUCTIVE"},
-    ]
-}
+mock_json="""{"labels":[{"word":"Al-Muddathir","category":"GOD"},{"word":"ARISE","category":"CONSTRUCTIVE"},{"word":"WARN","category":"DESTRUCTIVE"},{"word":"ALLAH","category":"GOD"},{"word":"purify","category":"CONSTRUCTIVE"},{"word":"Ar-Rujz","category":"DESTRUCTIVE"},{"word":"give","category":"CONSTRUCTIVE"},{"word":"deeds","category":"CONSTRUCTIVE"},{"word":"obedience","category":"CONSTRUCTIVE"},{"word":"patient","category":"CONSTRUCTIVE"},{"word":"transgressors","category":"DESTRUCTIVE"},{"word":"Allah","category":"GOD"},{"word":"Trumpet","category":"DESTRUCTIVE"},{"word":"gather","category":"CONSTRUCTIVE"},{"word":"Hard","category":"DESTRUCTIVE"},{"word":"disbelievers","category":"DESTRUCTIVE"},{"word":"Al-Waleed","category":"GOD"},{"word":"bin","category":"GOD"},{"word":"Al-Mugheerah","category":"GOD"},{"word":"Al-Makhzoomee","category":"GOD"},{"word":"granted","category":"CONSTRUCTIVE"},{"word":"abundance","category":"CONSTRUCTIVE"},{"word":"smooth","category":"CONSTRUCTIVE"},{"word":"comfortable","category":"CONSTRUCTIVE"},{"word":"God","category":"GOD"},{"word":"strength","category":"CONSTRUCTIVE"},{"word":"rock","category":"CONSTRUCTIVE"},{"word":"hills","category":"CONSTRUCTIVE"},{"word":"understanding","category":"CONSTRUCTIVE"},{"word":"formed","category":"CONSTRUCTIVE"},{"word":"stubborn","category":"DESTRUCTIVE"},{"word":"opposing","category":"DESTRUCTIVE"},{"word":"torment","category":"DESTRUCTIVE"},{"word":"Verily","category":"GOD"},{"word":"cursed","category":"DESTRUCTIVE"},{"word":"plotted","category":"DESTRUCTIVE"},{"word":"plot","category":"DESTRUCTIVE"},{"word":"god","category":"GOD"},{"word":"create","category":"CONSTRUCTIVE"},{"word":"destroy","category":"DESTRUCTIVE"},{"word":"life","category":"CONSTRUCTIVE"},{"word":"death","category":"DESTRUCTIVE"},{"word":"frowned","category":"DESTRUCTIVE"}]}"""
+# fmt: on
 
 
 def classify_sentence(sentence: str):
@@ -303,7 +232,7 @@ def classify_sentence(sentence: str):
     try:
         return json.loads(mock_json).get("labels", [])
     except Exception:
-        return []
+        RuntimeError(Exeption)
 
 
 def split_into_sentences(text: str):

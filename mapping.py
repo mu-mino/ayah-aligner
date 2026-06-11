@@ -288,17 +288,17 @@ def main() -> None:
     parser.add_argument(
         "--video",
         type=Path,
-        default="/home/muhammed-emin-eser/desk/din/quran/maher_workaround/Quran_cropped/سورة النصر (110) بصوت القارئ الشيخ ماهر المعيقلي [qFKt7_5cEJ0].text_only.mp4",
+        default="/home/muhammed-emin-eser/desk/din/quran/maher_workaround/Quran_cropped/سورة المدثر (74) بصوت القارئ الشيخ ماهر المعيقلي [C-BOnEXP9qA].text_only.mp4",
     )
     parser.add_argument(
         "--audio",
         type=Path,
-        default="/home/muhammed-emin-eser/desk/din/quran/maher_playlist/maher_playlist/سورة النصر (110) بصوت القارئ الشيخ ماهر المعيقلي.flac",
+        default="/home/muhammed-emin-eser/desk/din/quran/maher_playlist/maher_playlist/سورة المدثر (74) بصوت القارئ الشيخ ماهر المعيقلي.flac",
     )
     parser.add_argument(
         "--text",
         type=Path,
-        default="/home/muhammed-emin-eser/desk/din/quran/eng_translation/chunked_translation/110_An-Nasr.txt",
+        default="/home/muhammed-emin-eser/desk/din/quran/eng_translation/chunked_translation/74_Al-Muddathir.txt",
     )
     parser.add_argument(
         "--output",
@@ -307,7 +307,8 @@ def main() -> None:
         help="Ausgabeverzeichnis (Dateiname wird aus --text abgeleitet)",
     )
     parser.add_argument("--device", default=None, type=str)
-    parser.add_argument("--surah", type=int, help="Surah-Nummer (z.B. 98)", default=110)
+    parser.add_argument("--surah", type=int, help="Surah-Nummer (z.B. 98)", default=74)
+
     args = parser.parse_args()
 
     mapping_path = args.output / (args.text.stem + ".mapping")

@@ -206,160 +206,46 @@ COLOR_MAP = {
     "CONSTRUCTIVE": "&H803500&",  # Blau
 }
 
-SYSTEM_PROMPT = """You are a strict, conservative annotation selector.CRITICAL RULE:- Word extraction and categorization is COMPLETELY OPTIONAL.- It is significantly better to return an EMPTY list than to include a doubtful or incorrect word. - Never force a word into a category just to fill the JSON. If a text contains NO clear matches for the categories, you MUST return an empty labels array.TASK:Analyze the input text and select ONLY words that clearly, directly, and without ambiguity belong to one of the specified categories.CATEGORIES & CRITERIA:- GOD: Direct names or explicit synonyms for the deity (e.g., Allah, God, Lord). Do NOT include chapter names, placeholders, pronouns, or surrounding nouns.- DESTRUCTIVE: Words expressing explicit destruction, damage, sin, or severe negativity (e.g., destroy, death, torment, cursed).- CONSTRUCTIVE: Words expressing creation, purification, reward, or explicit positivity (e.g., create, purify, patience, blessings).OUTPUT RULES:- You DO NOT modify, capitalize, or rewrite text.- You only select exact WORDS from the input text.- Do NOT output any conversational text, explanations, thoughts, or formatting blocks before or after the JSON.- Return ONLY valid JSON adhering strictly to this format:{  "labels": [    {"word": "exact_word_from_text", "category": "GOD|DESTRUCTIVE|CONSTRUCTIVE"}  ]}NEGATIVE EXAMPLE (How to handle empty cases):Input: "The cloaked one refers to the Prophet Muhammad who used to pray in a cave."Output:{  "labels": []}"""
-
 # fmt: off
 
 REFERENCE_THEMES = {
-    "GOD": re.compile(
-        r"^(?:"
-        # 1. Eigennamen (allein stehend)
-        r"(?:allah|god|lord|albarr|omnipotentking|supremecreator|realbestower|ownerofpower)"
-        r"|"
-        # 2. Englische attributive Namen (müssen 'the' oder 'all'/'most' haben)
-        r"(?:(?:the\s+)?(?:all|most|oft)[- ]?"
-        r"(?:mighty|merciful|beneficent|great|high|generous|kind|just|near|"
-        r"forgiving|wise|knower|hearer|seer|aware|provider|strong|knowing|"
-        r"capable|holy|compassionate|majestic|glorious|living|eternal|subduer|"
-        r"avenger|sustainer|gracious|faithful|forbearing|magnificent|appreciative|"
-        r"preserver|reckoner|watchful|responsive|embracing|loving|resurrector|"
-        r"witness|truth|trustee|firm|friend|praiseworthy|originator|restorer|"
-        r"giver\s+of\s+life|taker\s+of\s+life|self[- ]subsisting|finder|one|"
-        r"unique|able|determined|expediter|delayer|first|last|manifest|hidden|"
-        r"patron|self[- ]exalted|source\s+of\s+goodness|acceptor\s+of\s+repentance|"
-        r"pardoner|kind|compeller|opener|withholder|expander|abaser|exalter|"
-        r"honorer|dishonorer|judge|subtle))"
-        r"|"
-        # 3. Arabische Transliterationen (flexibel mit Artikel)
-        r"(?:(?:al|ar|as|at|az|ad|ah|ak|aq|am|an|aw)[- ]?)?"
-        r"(?:rahman|rahim|malik|quddus|salam|mu?min|aziz|jabbar|mutakabbir|"
-        r"khaliq|bari(?:')?|musawwir|ghaffar|qahhar|wahhab|razzaq|fattah|"
-        r"alim|qabid|basit|khafid|rafi(?:')?|mu(?:i|')zz|mudhill|sami(?:')?|"
-        r"basir|hakam|adl|latif|khabir|halim|azim|ghafur|shakur|ali(?:')?|"
-        r"kabir|hafiz|muqit|hasib|jalil|karim|raqib|mujib|wasi(?:')?|hakim|"
-        r"wadud|majid|ba(?:i|')th|shahid|haqq|wakil|qawi|matin|wali(?:')?|"
-        r"hamid|muhsi(?:')?|mubdi(?:')?|mu(?:i|')d|muhyi(?:')?|mumit|hayy|"
-        r"qayyum|wajid|wahid|ahad|samad|qadir|muqtadir|muqaddim|mu(?:a|')khkhir|"
-        r"awwal|akhir|zahir|batin|muta(?:'|a)li|barr|tawwab|muntaqim|"
-        r"afuww|ra(?:u|')f)"
-        r")$",
-        re.IGNORECASE
-    ),
-    
+   "GOD": re.compile(r"(?i)(?:(?:al|ar|as|at|az|ad|ah|ak|aq|am|an|aw)[- ]?)?(?:ra[hk]?m[ae]?n|ra[hk]?[yi]m|malik|qudd[u]?s|sala[ae]?m|m[u']?min|'?az[yi]z|jabb[a]?r|mutakabbir|khal[i]?q|b[a]?ri[']?|mu[s]?awwir|ghaff[a]?r|qahh[a]?r|wahh[a]?b|razz[a]?q|fatta[eh]|'?ali[ae]?m|q[a]?bi[zd]|b[a]?si[tdt]|kh[a]?fi[dz]|r[a]?fi[']?|m[u']?izz|mudhill|s[a]?mi[']?|b[a]?si[ry]|h[a]?kam|'?adl|la[td]i[yf]|khab[yi]r|h[a]?li[ym]|'?a[z]?i[ym]|ghaf[uo]r|shak[uo]r|'?a[l]?i[']?|kab[yi]r|h[a]?fi[z]|muq[yi]t|h[a]?s[yi]b|jal[yi]l|kar[yi]m|r[a]?q[yi]b|muj[yi]b|w[a]?si[']?|h[a]?k[yi]m|wad[uo]d|maj[yi]d|b[a]?[']?ith|shah[yi]d|h[a]?qq|wak[yi]l|qaw[wi]|mat[yi]n|wal[yi]|h[a]?mi[zd]|muh[s]?[yi]|mubd[yi]|mu[']?[yi]d|muh[yi]|mum[yi]t|h[ae]yy|qayy[uo]m|w[a]?jid|w[a]?hid|'?a[h]?ad|s[a]?mad|q[a]?dir|muqtadir|muqaddim|mu[']?akhkhir|'?awwal|'?akhir|z[a]?hir|b[a]?tin|muta[']?ali|barr|taww[a]?b|muntaqim|'?afuww|ra[']?uf|n[uy]r|h[au]d[ae]|'?a[z]?h[ae]r|b[au]t[ae]?n|'?aww[ae]l|'?a[hk]i[r]|wali[ae]?|mawla[ae]?|nas[yi]r|q[ae]ri[bd]|m[au]ji[d]|shak[uo]r|'?al[yi]y[ae]?|'?a[zd]?h[ae]?m|'?a[kl]?r[ae]?m|'?a[hk]?s[ae]?n|'?aj[ae]?m[ae]?l|'?aj[ae]?w[ae]?d|'?ak[ae]?r[ae]?m|'?a[kl]?b[ae]?r|'?a'?l[ae]?|'?a'?z[ae]?|'?a'?z[ae]?m|'?a[hk]?f[ae]?d|'?a[hk]?f[ae]?z|'?a[hk]?k[ae]?m|'?a[hk]?l[ae]?q|'?a[hk]?m[ae]?d|'?a[hk]?n[ae]?|'?a[hk]?n[ae]?m|'?a[hk]?n[ae]?t|'?a[hk]?n[ae]?y|'?a[hk]?q[ae]?r|'?a[hk]?r[ae]?m|'?a[hk]?s[ae]?b|'?a[hk]?s[ae]?n|'?a[hk]?s[ae]?r|'?a[hk]?t[ae]?n|'?a[hk]?t[ae]?r|'?a[hk]?y[ae]?r|'?a[hk]?z[ae]?|'?a[hk]?z[ae]?m)(?:\s+(?:the\s+)?(?:all|most|oft)[- ]?(?:mighty|merciful|beneficent|great|high|generous|kind|just|near|forgiving|wise|knower|hearer|seer|aware|provider|strong|knowing|capable|holy|compassionate|majestic|glorious|living|eternal|subduer|avenger|sustainer|gracious|faithful|forbearing|magnificent|appreciative|preserver|reckoner|watchful|responsive|embracing|loving|resurrector|witness|truth|trustee|firm|friend|praiseworthy|originator|restorer|giver\s+of\s+life|taker\s+of\s+life|self[- ]subsisting|finder|one|unique|able|determined|expediter|delayer|first|last|manifest|hidden|patron|self[- ]exalted|source\s+of\s+goodness|acceptor\s+of\s+repentance|pardoner|kind|compeller|opener|withholder|expander|abaser|exalter|honorer|dishonorer|judge|subtle|all-just|all-forgiving|all-merciful|all-compassionate|all-majestic|all-glorious|mostholy|mostcompassionate|thebeneficent|themerciful|theforgiving|thejust|themighty|thewise|theliving|theeternal|thesubduer|theavenger))?(?:(?:allah|god|lord|albarr|omnipotentking|supremecreator|realbestower|ownerofpower|king|sovereign|master|creator|maker|fashioner|subduer|bestower|provider|opener|judge|avenger|pardoner|compeller|expander|abaser|exalter|honorer|dishonorer|withholder|subtle|gracious|faithful|forbearing|magnificent|appreciative|preserver|reckoner|watchful|responsive|loving|resurrector|witness|trustee|friend|praiseworthy|originator|restorer|finder|determined|expediter|delayer|manifest|patron|source\s+of\s+goodness|acceptor\s+of\s+repentance))", re.IGNORECASE), 
     "DESTRUCTIVE": re.compile(
-    r"^("
-    # Jenseitsstrafen & Höllenbezeichnungen
-    r"hell(?:fire)?|blaze|blazing\s+fire|burning\s+fire|torment\w*|chastis\w*|punish\w*|tortur\w*|scourge\w*|doom\w*|disgrace\w*|"
-    r"gehenna|jahannam|abyss|furnace|boiling\s+water|fetters|chains|"
-    # Göttlicher Zorn & Vernichtung
-    r"strik\w*|seiz\w*|destroy\w*|destruct\w*|curs\w*|reject\w*|belying|belied|wrath|anger|retribution|vengeance|penalty|calamity|ruin\w*|perish\w*|overthrow\w*|"
-    # Beschreibende Adjektive des Schmerzes
-    r"painful|severe|grievous|miserable|awful|dreadful|terrible|heavy|wretched|wicked|scorching|"
-    # Fehlverhalten, Sünde & Ablehnung
-    r"disbeliev\w*|unbeliev\w*|wrongdoer\w*|polytheist\w*|sinner\w*|arrogant\w*|transgress\w*|hypocri\w*|evildoer\w*|disobedien\w*|rebel\w*|insolent\w*|infidel\w*|idolater\w*|misguid\w*|stray\w*|"
-    r"blasphem\w*|envy|envious|hatred|malice|regret\w*|remorse\w*|despair\w*"
-    r")$"
-    r"|saqar|saqr|hutamah|laz[aā]\w*|jah[iī]m|sa[iī]r|haawiyah|h[aaā]wiyah|"
-    r"zaqqum|zaqq[ou]*m|ghisl[iī]n|ghass[aa]*q|ham[iī]m|"
-    r"sijjin|sijji[n]|al-sijjin|"
-    r"dari\w*|dhar[iī]\w*|samum\w*|samoom\w*|dukhan\w*|"
-    r"fir['`]?[aā]wn\w*|pharaoh\w*|"
-    r"tham[uū]d\w*|samood\w*|"
-    r"(?:['`]?)?aad\w*|"
-    r"madyan\w*|midianit\w*|"
-    r"q[aaā]r[uū]n\w*|korah\w*|"
-    r"ab[uū]\s+lahab|lahab\w*|"
-    r"nimrod\w*|"
-    r"sodom\w*|gomorrah\w*|tubba\w*|"
-    r"sting\w*|miser\w*|miserl\w*|"
-    r"boast\w*|vainglor\w*|"
-    r"slander\w*|backbit\w*|"
-    r"mock\w*|ridicul\w*|"
-    r"corrupt\w*|corrupter\w*|"
-    r"oppress\w*|oppressor\w*|"
-    r"tyrann\w*|"
-    r"ingrat\w*|ungrateful\w*|"
-    r"deceiv\w*|decepti\w*|"
-    r"heedless\w*|"
-    r"greed\w*|avaric\w*|covet\w*|"
-    r"nif[aaā]q\w*|mun[aaā]fiq\w*|"
-    r"shirk\w*|mushrik\w*|mushrik[ou]n|"
-    r"bagh[yī]\w*|"
-    r"fas[aaā]d\w*|mufsid\w*|"
-    r"rijs\w*|rijz\w*|"
-    r"najis\w*|"
-    r"fitnah\w*",
-    re.IGNORECASE,
-),
-        
+        r"^("
+r"hell(?:fire)?|blaze|blazing\s+fire|burning\s+fire|torment\w*|chastis\w*|punish\w*|tortur\w*|scourge\w*|doom\w*|disgrace\w*|"r"gehenna|jahannam|abyss|furnace|boiling\s+water|fetters|chains|"r"strik\w*|seiz\w*|destroy\w*|destruct\w*|curs\w*|reject\w*|belying|belied|wrath|anger|retribution|vengeance|penalty|calamity|ruin\w*|perish\w*|overthrow\w*|"r"painful|severe|grievous|miserable|awful|dreadful|terrible|heavy|wretched|wicked|scorching|"r"disbeliev\w*|unbeliev\w*|wrongdoer\w*|polytheist\w*|sinner\w*|arrogant\w*|transgress\w*|hypocri\w*|evildoer\w*|disobedien\w*|rebel\w*|insolent\w*|infidel\w*|idolater\w*|misguid\w*|stray\w*|"r"blasphem\w*|envy|envious|hatred|malice|regret\w*|remorse\w*|despair\w*"r")$"r"|saqar|saqr|hutamah|laz[aā]\w*|jah[iī]m|sa[iī]r|haawiyah|h[aaā]wiyah|"r"zaqqum|zaqq[ou]*m|ghisl[iī]n|ghass[aa]*q|ham[iī]m|"r"sijjin|sijji[n]|al-sijjin|"r"dari\w*|dhar[iī]\w*|samum\w*|samoom\w*|dukhan\w*|"r"fir['`]?[aā]wn\w*|pharaoh\w*|"r"tham[uū]d\w*|samood\w*|"r"(?:['`]?)?aad\w*|"r"madyan\w*|midianit\w*|"r"q[aaā]r[uū]n\w*|korah\w*|"r"ab[uū]\s+lahab|lahab\w*|"r"nimrod\w*|"r"sodom\w*|gomorrah\w*|tubba\w*|"r"sting\w*|miser\w*|miserl\w*|"r"boast\w*|vainglor\w*|"r"slander\w*|backbit\w*|"r"mock\w*|ridicul\w*|"r"corrupt\w*|corrupter\w*|"r"oppress\w*|oppressor\w*|"r"tyrann\w*|"r"ingrat\w*|ungrateful\w*|"r"deceiv\w*|decepti\w*|"r"heedless\w*|"r"greed\w*|avaric\w*|covet\w*|"r"nif[aaā]q\w*|mun[aaā]fiq\w*|"r"shirk\w*|mushrik\w*|mushrik[ou]n|"r"bagh[yī]\w*|"r"fas[aaā]d\w*|mufsid\w*|"r"rijs\w*|rijz\w*|"r"najis\w*|"r"fitnah\w*",re.IGNORECASE,),
     "CONSTRUCTIVE": re.compile(
-    r"^("
-    # Jenseitsbelohnungen & Paradies
-    r"paradise|garden\w*|eden|jannah|firdaus|abode\s+of\s+peace|"
-    # Göttliche Attribute der Rettung & Führung
-    r"light|peace|bliss|mercy|grace|glor\w*|victory|victor\w*|bount\w*|favor\w*|salvation|prosperity|"
-    # Handlungen der Vergebung & Rettung
-    r"forgiv\w*|pardon\w*|guid\w*|purif\w*|save\w*|admit\w*|reward\w*|rejoic\w*|triumph\w*|bless\w*|"
-    # Positive qualitative Zustände
-    r"beautiful|pure|eternal|successful|radiant|noble|trustworthy|truth|glorio\w*|content\w*|"
-    # Die Gemeinschaft der Rechtgeleiteten
-    r"believer\w*|righteous\w*|pious|humble|muttaqoon|muslim\w*|submitter\w*|patient|steadfast\w*|devout\w*|repent\w*|good-doer\w*|truthful|"
-    r"qanit\w*|sabir\w*|tawwab\w*|"
-    r"tawakkul\w*|sabr\w*|rid[aaā]\w*|contentment\w*"
-    r")$"
-    r"|kawthar\w*|"
-    r"tasn[iī]m\w*|"
-    r"salsab[iī]l\w*|"
-    r"ma['`]?i[nī]?n\w*|zanjab[iī]l\w*|kaf[uū]r\w*|salhab\w*|"
-    r"israfil\w*|azra['`]?il\w*|harut\w*|marut\w*|"
-    r"houri\w*|hur\w*|"
-    r"sidrat\w*|sidrah\w*|"
-    r"illiyy[iī]n\w*|"
-    r"ridw[aaā]n\w*|"
-    r"sak[iī]nah\w*|"
-    r"shukr\w*|shakir\w*|shak[uu]r\w*|grateful\w*|thankful\w*|"
-    r"ikhl[aaā]s\w*|sincere\w*|sincerity|"
-    r"taqw[aaā]\w*|god[- ]fearing|god[- ]conscious|"
-    r"ihs[aaā]n\w*|muhsin\w*|excellent\w*|"
-    r"salih\w*|s[aā]lih\w*|"
-    r"aww[aaā]b\w*|"
-    r"martyr\w*|shah[iī]d\w*|shuhad[aa]*\w*|"
-    r"muqarrab\w*|near[- ]brought|nearest\s+to\s+allah|"
-    r"jibr[iī]l\w*|gabrie?l\w*|"
-    r"m[iī]k[aaā]l\w*|michae?l\w*|"
-    r"ridwan\w*|"
-    r"guardian[- ]angel\w*|"
-    r"keepers?\s+of\s+paradise|"
-    r"companions?\s+of\s+the\s+right|"
-    r"people\s+of\s+the\s+right|"
-    r"right[- ]handed|"
-    r"sidd[iī]q\w*|truthful[- ]one\w*",
-    re.IGNORECASE,
-),
+        r"^("
+r"paradise|garden\w*|eden|jannah|firdaus|abode\s+of\s+peace|"r"light|peace|bliss|mercy|grace|glor\w*|victory|victor\w*|bount\w*|favor\w*|salvation|prosperity|"r"forgiv\w*|pardon\w*|guid\w*|purif\w*|save\w*|admit\w*|reward\w*|rejoic\w*|triumph\w*|bless\w*|"r"beautiful|pure|eternal|successful|radiant|noble|trustworthy|truth|glorio\w*|content\w*|"r"believer\w*|righteous\w*|pious|humble|muttaqoon|muslim\w*|submitter\w*|patient|steadfast\w*|devout\w*|repent\w*|good-doer\w*|truthful|"r"qanit\w*|sabir\w*|tawwab\w*|"r"tawakkul\w*|sabr\w*|rid[aaā]\w*|contentment\w*"r")$"r"|kawthar\w*|"r"tasn[iī]m\w*|"r"salsab[iī]l\w*|"r"ma['`]?i[nī]?n\w*|zanjab[iī]l\w*|kaf[uū]r\w*|salhab\w*|"r"israfil\w*|azra['`]?il\w*|harut\w*|marut\w*|"r"houri\w*|hur\w*|"r"sidrat\w*|sidrah\w*|"r"illiyy[iī]n\w*|"r"ridw[aaā]n\w*|"r"sak[iī]nah\w*|"r"shukr\w*|shakir\w*|shak[uu]r\w*|grateful\w*|thankful\w*|"r"ikhl[aaā]s\w*|sincere\w*|sincerity|"r"taqw[aaā]\w*|god[-]fearing|god[-]conscious|"r"ihs[aaā]n\w*|muhsin\w*|excellent\w*|"r"salih\w*|s[aā]lih\w*|"r"aww[aaā]b\w*|"r"martyr\w*|shah[iī]d\w*|shuhad[aa]*\w*|"r"muqarrab\w*|near[-]brought|nearest\s+to\s+allah|"r"jibr[iī]l\w*|gabrie?l\w*|"r"m[iī]k[aaā]l\w*|michae?l\w*|"r"ridwan\w*|"r"guardian[-]angel\w*|"r"keepers?\s+of\s+paradise|"r"companions?\s+of\s+the\s+right|"r"people\s+of\s+the\s+right|"r"right[-]handed|"r"sidd[iī]q\w*|truthful[-]one\w*",re.IGNORECASE,),
 }
 
-mock_json="""{"labels":[{"word":"Al-Muddathir","category":"GOD"},{"word":"ARISE","category":"CONSTRUCTIVE"},{"word":"WARN","category":"DESTRUCTIVE"},{"word":"ALLAH","category":"GOD"},{"word":"purify","category":"CONSTRUCTIVE"},{"word":"Ar-Rujz","category":"DESTRUCTIVE"},{"word":"give","category":"CONSTRUCTIVE"},{"word":"deeds","category":"CONSTRUCTIVE"},{"word":"obedience","category":"CONSTRUCTIVE"},{"word":"patient","category":"CONSTRUCTIVE"},{"word":"transgressors","category":"DESTRUCTIVE"},{"word":"Allah","category":"GOD"},{"word":"Trumpet","category":"DESTRUCTIVE"},{"word":"gather","category":"CONSTRUCTIVE"},{"word":"Hard","category":"DESTRUCTIVE"},{"word":"disbelievers","category":"DESTRUCTIVE"},{"word":"Al-Waleed","category":"GOD"},{"word":"bin","category":"GOD"},{"word":"Al-Mugheerah","category":"GOD"},{"word":"Al-Makhzoomee","category":"GOD"},{"word":"granted","category":"CONSTRUCTIVE"},{"word":"abundance","category":"CONSTRUCTIVE"},{"word":"smooth","category":"CONSTRUCTIVE"},{"word":"comfortable","category":"CONSTRUCTIVE"},{"word":"God","category":"GOD"},{"word":"strength","category":"CONSTRUCTIVE"},{"word":"rock","category":"CONSTRUCTIVE"},{"word":"hills","category":"CONSTRUCTIVE"},{"word":"understanding","category":"CONSTRUCTIVE"},{"word":"formed","category":"CONSTRUCTIVE"},{"word":"stubborn","category":"DESTRUCTIVE"},{"word":"opposing","category":"DESTRUCTIVE"},{"word":"torment","category":"DESTRUCTIVE"},{"word":"Verily","category":"GOD"},{"word":"cursed","category":"DESTRUCTIVE"},{"word":"plotted","category":"DESTRUCTIVE"},{"word":"plot","category":"DESTRUCTIVE"},{"word":"god","category":"GOD"},{"word":"create","category":"CONSTRUCTIVE"},{"word":"destroy","category":"DESTRUCTIVE"},{"word":"life","category":"CONSTRUCTIVE"},{"word":"death","category":"DESTRUCTIVE"},{"word":"frowned","category":"DESTRUCTIVE"}]}"""
+# mock_json="""{"labels":[{"word":"Al-Muddathir","category":"GOD"},{"word":"ARISE","category":"CONSTRUCTIVE"},{"word":"WARN","category":"DESTRUCTIVE"},{"word":"ALLAH","category":"GOD"},{"word":"purify","category":"CONSTRUCTIVE"},{"word":"Ar-Rujz","category":"DESTRUCTIVE"},{"word":"give","category":"CONSTRUCTIVE"},{"word":"deeds","category":"CONSTRUCTIVE"},{"word":"obedience","category":"CONSTRUCTIVE"},{"word":"patient","category":"CONSTRUCTIVE"},{"word":"transgressors","category":"DESTRUCTIVE"},{"word":"Allah","category":"GOD"},{"word":"Trumpet","category":"DESTRUCTIVE"},{"word":"gather","category":"CONSTRUCTIVE"},{"word":"Hard","category":"DESTRUCTIVE"},{"word":"disbelievers","category":"DESTRUCTIVE"},{"word":"Al-Waleed","category":"GOD"},{"word":"bin","category":"GOD"},{"word":"Al-Mugheerah","category":"GOD"},{"word":"Al-Makhzoomee","category":"GOD"},{"word":"granted","category":"CONSTRUCTIVE"},{"word":"abundance","category":"CONSTRUCTIVE"},{"word":"smooth","category":"CONSTRUCTIVE"},{"word":"comfortable","category":"CONSTRUCTIVE"},{"word":"God","category":"GOD"},{"word":"strength","category":"CONSTRUCTIVE"},{"word":"rock","category":"CONSTRUCTIVE"},{"word":"hills","category":"CONSTRUCTIVE"},{"word":"understanding","category":"CONSTRUCTIVE"},{"word":"formed","category":"CONSTRUCTIVE"},{"word":"stubborn","category":"DESTRUCTIVE"},{"word":"opposing","category":"DESTRUCTIVE"},{"word":"torment","category":"DESTRUCTIVE"},{"word":"Verily","category":"GOD"},{"word":"cursed","category":"DESTRUCTIVE"},{"word":"plotted","category":"DESTRUCTIVE"},{"word":"plot","category":"DESTRUCTIVE"},{"word":"god","category":"GOD"},{"word":"create","category":"CONSTRUCTIVE"},{"word":"destroy","category":"DESTRUCTIVE"},{"word":"life","category":"CONSTRUCTIVE"},{"word":"death","category":"DESTRUCTIVE"},{"word":"frowned","category":"DESTRUCTIVE"}]}"""
 # fmt: on
 
 
-def classify_sentence(sentence: str):
-    # prompt = f"{SYSTEM_PROMPT}\n\nTEXT:\n{sentence}\n"
-    # output = LLM(prompt, max_tokens=256, temperature=0.0)
-    # text = output["choices"][0]["text"]
-    # print(text)
-
-    try:
-        return json.loads(mock_json).get("labels", [])
-    except Exception:
-        RuntimeError("ERROR: KI-OUTPUT => JSON")
+import json
 
 
-def check_semantics(index, word, sentence, category):
+import json
+
+
+def check_semantics(sentence, matches):
+    """
+    matches: Liste von Dicts/Tuples, z.B.:
+             [{"index": 3, "word": "Gott", "category": "GOD"}, ...]
+    """
+    # Erstelle eine lesbare Liste der Zielwörter für den Prompt
+    targets_string = "\n".join(
+        [
+            f'- Index {m["index"]}: "{m["word"]}" (Kategorie: {m["category"]})'
+            for m in matches
+        ]
+    )
+
     prompt = f"""You are a precise semantic validation engine.
     TASK:
-    Analyze the sentence below and determine if the specific word highlighted in quotes refers to the category '{category}' in this exact semantic context.
+    Analyze the sentence below and determine for each listed target word if it truly refers to its assigned category in this exact semantic context.
 
-    CRITERIA FOR '{category}':
+    CRITERIA FOR CATEGORIES:
     1. GOD (Deity & Divine Attributes)
     - MUST refer ONLY to the Supreme Deity/Creator (e.g., Allah, Lord, the Merciful).
     - DO NOT match if it refers to creation
@@ -377,19 +263,42 @@ def check_semantics(index, word, sentence, category):
     SENTENCE:
     \"\"\"{sentence}\"\"\"
 
-    TARGET WORD TO VERIFY:
-   "{word}" at index {index} of the sentence
+    TARGET WORDS TO VERIFY:
+    {targets_string}
 
     OUTPUT RULE:
-    Your response must be binary. Do NOT include any introductory text, punctuation, or explanations.
-    - If the target word truly and unambiguously fits the category in this context, output exactly and only the word: True
-    - If it does not fit, is ambiguous, or is a false positive, or you are not sure, output exactly and only the word: False""")
+    Your response must be a valid JSON object where the keys are the string representation of the indexes, and values are booleans (true/false).
+    Do NOT include any markdown formatting, backticks, or explanation.
+    
+    Example Output Format:
+    {{
+        "3": true,
+        "7": false
+    }}"""
 
-    output = LLM(prompt, max_tokens=256, temperature=0.0)
+    output = LLM(prompt, max_tokens=512, temperature=0.0)
     text = output["choices"][0]["text"].strip()
 
-    return category if text == "True" else False
+    try:
+        # Konvertiert JSON-Keys ("3") zu Integern (3) für einfachere Handhabung
+        decisions = {int(k): v for k, v in json.loads(text).items()}
+    except Exception:
+        decisions = {m["index"]: False for m in matches}
 
+    # Konsolen-Validierung (bunter Satz)
+    GRUEN = "\033[32m"
+    RESET = "\033[0m"
+    worte = sentence.split()
+    for m in matches:
+        idx = m["index"]
+        if idx < len(worte) and decisions.get(idx, False):
+            worte[idx] = f"{GRUEN}{worte[idx]}{RESET}"
+    bunter_satz = " ".join(worte)
+
+    ausgabe = f"{'#' * 55}\nSENTENCE: \t {bunter_satz}\n{'#' * 55}\nDECISIONS: \t {decisions}\n\n\n"
+    print(ausgabe)
+
+    return decisions
 
 
 def split_into_sentences(text: str):
@@ -428,43 +337,46 @@ def annotate_text(text: str) -> str:
     output_sentences = []
 
     for sentence in sentences:
-        labels = classify_sentence(sentence)
-
         # Build deterministic lookup: word -> category
-        highlight_map = {}
-        for item in labels:
-            word = item.get("word", "")
-            cat = item.get("category", "")
-            if cat in ALLOWED_LABELS:
-                highlight_map[word] = cat
-
         words = sentence.split(" ")
         processed = []
 
+        # 1. Schritt: Alle Regex-Treffer im Satz sammeln
+        detected_matches = []
         for i, w in enumerate(words):
             clean = normalize(w)
             clean_lower = clean.lower()
-            highlighted = False
 
-            # --- STUFE 1: REGEX CHECK (Allgemeingültig vor dem LLM) ---
             for category, pattern in REFERENCE_THEMES.items():
                 if pattern.search(clean_lower):
                     print(f"[REGEX] '{w.strip()}' -> Kategorie: {category}")
-                    category = check_semantics(i, w, sentence, category)
                     if category in COLOR_MAP:
-                        w = f"{{\\c{COLOR_MAP[category]}}}{w}{{\\c}}"
-                    highlighted = True
-                    break
+                        detected_matches.append(
+                            {
+                                "index": i,
+                                "word": w,
+                                "category": category,
+                                "color": COLOR_MAP[category],
+                            }
+                        )
+                        break
 
-            # --- STUFE 2: LLM LOOKUP MATCH ---
-            if not highlighted and clean in highlight_map:
-                cat = highlight_map[clean]
-                color = COLOR_MAP.get(cat)
-                if color:
-                    w = f"{{\\c{color}}}{w}{{\\c}}"
+        # 2. Schritt: Einmalige LLM-Validierung für den ganzen Satz
+        llm_decisions = {}
+        if detected_matches:
+            llm_decisions = check_semantics(sentence, detected_matches)
+
+        # 3. Schritt: Satz mit den validierten Treffern final verarbeiten
+        for i, w in enumerate(words):
+            match_info = next((m for m in detected_matches if m["index"] == i), None)
+
+            if match_info and llm_decisions.get(i, False):
+                if match_info["category"] == "GOD":
+                    w = f"{{\\c{match_info['color']}}}{{\\b1}}{w}{{\\b0}}{{\\c}}"
+                else:
+                    w = f"{{\\c{match_info['color']}}}{w}{{\\c}}"
 
             processed.append(w)
-
         output_sentences.append(" ".join(processed))
 
     return " ".join(output_sentences)

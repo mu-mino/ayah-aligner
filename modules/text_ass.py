@@ -209,20 +209,6 @@ COLOR_MAP = {
 SYSTEM_PROMPT = """You are a strict, conservative annotation selector.CRITICAL RULE:- Word extraction and categorization is COMPLETELY OPTIONAL.- It is significantly better to return an EMPTY list than to include a doubtful or incorrect word. - Never force a word into a category just to fill the JSON. If a text contains NO clear matches for the categories, you MUST return an empty labels array.TASK:Analyze the input text and select ONLY words that clearly, directly, and without ambiguity belong to one of the specified categories.CATEGORIES & CRITERIA:- GOD: Direct names or explicit synonyms for the deity (e.g., Allah, God, Lord). Do NOT include chapter names, placeholders, pronouns, or surrounding nouns.- DESTRUCTIVE: Words expressing explicit destruction, damage, sin, or severe negativity (e.g., destroy, death, torment, cursed).- CONSTRUCTIVE: Words expressing creation, purification, reward, or explicit positivity (e.g., create, purify, patience, blessings).OUTPUT RULES:- You DO NOT modify, capitalize, or rewrite text.- You only select exact WORDS from the input text.- Do NOT output any conversational text, explanations, thoughts, or formatting blocks before or after the JSON.- Return ONLY valid JSON adhering strictly to this format:{  "labels": [    {"word": "exact_word_from_text", "category": "GOD|DESTRUCTIVE|CONSTRUCTIVE"}  ]}NEGATIVE EXAMPLE (How to handle empty cases):Input: "The cloaked one refers to the Prophet Muhammad who used to pray in a cave."Output:{  "labels": []}"""
 
 # fmt: off
-_GOD_KEYS=["allah","god","lord","albarr","allmighty","allmighty","all-mighty","allknower","allknower","all-knower","allwise","allwise","all-wise","allhearer","allhearer","all-hearer","allseer","allseer","all-seer","allaware","allaware","all-aware","allprovider","all-provider","allstrong","all-strong","allknowing","all-knowing","allcapable","all-capable","mostbeneficent","mostmerciful","mostgreat","mosthigh","mostgenerous","mostkind","mostjust","mostnear","oftforgiving","oft-forgiving","omnipotentking","supremecreator","realbestower","ownerofpower","all-just","all-forgiving","all-merciful","all-compassionate","all-majestic","all-glorious","mostholy","mostcompassionate","thebeneficent","themerciful","theforgiving","thejust","themighty","thewise","theliving","theeternal","thesubduer","theavenger"]
-
-_GOD_BASES = [
-    "mighty", "merciful", "beneficent", "great", "high", "generous", "kind",
-    "just", "near", "forgiving", "wise", "knower", "hearer", "seer", "aware",
-    "provider", "strong", "knowing", "capable", "holy", "compassionate",
-    "majestic", "glorious", "living", "eternal", "subduer", "avenger", "barr"
-]
-
-# Spezielle Eigennamen (kein Präfix nötig)
-_GOD_PROPER = [
-    "allah", "god", "lord", "albarr", "omnipotentking", "supremecreator",
-    "realbestower", "ownerofpower"
-]
 
 REFERENCE_THEMES = {
     "GOD": re.compile(
@@ -260,8 +246,7 @@ REFERENCE_THEMES = {
         re.IGNORECASE
     ),
     
-    # Key exakt wie in Ihrer Vorgabe beibehalten (inkl. des Tippfehlers, um Kompatibilität zu wahren)
-    "DESTRUCITVE": re.compile(
+    "DESTRUCTIVE": re.compile(
     r"^("
     # Jenseitsstrafen & Höllenbezeichnungen
     r"hell(?:fire)?|blaze|blazing\s+fire|burning\s+fire|torment\w*|chastis\w*|punish\w*|tortur\w*|scourge\w*|doom\w*|disgrace\w*|"
@@ -366,7 +351,45 @@ def classify_sentence(sentence: str):
     try:
         return json.loads(mock_json).get("labels", [])
     except Exception:
-        RuntimeError(Exeption)
+        RuntimeError("ERROR: KI-OUTPUT => JSON")
+
+
+def check_semantics(index, word, sentence, category):
+    prompt = f"""You are a precise semantic validation engine.
+    TASK:
+    Analyze the sentence below and determine if the specific word highlighted in quotes refers to the category '{category}' in this exact semantic context.
+
+    CRITERIA FOR '{category}':
+    1. GOD (Deity & Divine Attributes)
+    - MUST refer ONLY to the Supreme Deity/Creator (e.g., Allah, Lord, the Merciful).
+    - DO NOT match if it refers to creation
+
+    2. DESTRUCTIVE (Sin, Disbelief, Punishment, and Cosmic Destruction)
+    - MUST match explicit acts of destruction, divine punishment, torment (e.g., Hell, punishment, doom).
+    - MUST match terms of ultimate spiritual failure, rebellion, or sin: This explicitly includes "disbelievers" (Kafir), "sinners/criminals" (Mujrim), hypocrites, arrogance against God, and major sins.
+    - CRITERIA: If the word embodies spiritual ruin, hostility to truth, or physical destruction, it is DESTRUCTIVE.
+
+    3. CONSTRUCTIVE (Faith, Virtue, Divine Reward, and Creation)
+    - MUST match explicit acts of creation, guidance, purification, and virtue (e.g., patience, charity).
+    - MUST match terms of spiritual success and obedience: This explicitly includes "believers" (Mu'min), "the righteous", "angels" (as agents of divine good), and divine rewards (e.g., Paradise, blessings).
+    - CRITERIA: If the word embodies spiritual success, divine alignment, moral virtue, or creation, it is CONSTRUCTIVE.
+
+    SENTENCE:
+    \"\"\"{sentence}\"\"\"
+
+    TARGET WORD TO VERIFY:
+   "{word}" at index {index} of the sentence
+
+    OUTPUT RULE:
+    Your response must be binary. Do NOT include any introductory text, punctuation, or explanations.
+    - If the target word truly and unambiguously fits the category in this context, output exactly and only the word: True
+    - If it does not fit, is ambiguous, or is a false positive, or you are not sure, output exactly and only the word: False""")
+
+    output = LLM(prompt, max_tokens=256, temperature=0.0)
+    text = output["choices"][0]["text"].strip()
+
+    return category if text == "True" else False
+
 
 
 def split_into_sentences(text: str):
@@ -418,7 +441,7 @@ def annotate_text(text: str) -> str:
         words = sentence.split(" ")
         processed = []
 
-        for w in words:
+        for i, w in enumerate(words):
             clean = normalize(w)
             clean_lower = clean.lower()
             highlighted = False
@@ -427,6 +450,7 @@ def annotate_text(text: str) -> str:
             for category, pattern in REFERENCE_THEMES.items():
                 if pattern.search(clean_lower):
                     print(f"[REGEX] '{w.strip()}' -> Kategorie: {category}")
+                    category = check_semantics(i, w, sentence, category)
                     if category in COLOR_MAP:
                         w = f"{{\\c{COLOR_MAP[category]}}}{w}{{\\c}}"
                     highlighted = True

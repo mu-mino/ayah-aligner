@@ -167,7 +167,7 @@ def run(
 
     # Nach einem Fall-3/4-Split haben alle Folge-Gruppen keinen Shift-Vorgänger mehr —
     # sie bekommen ihren eigenen circle_window-Timestamp (wie Fall 1).
-    unshifted_mode: bool = first_window_has_circle
+    unshifted_mode: bool = False
 
     verse_number = 1
     for idx, group in enumerate(groups):
@@ -192,13 +192,13 @@ def run(
             group.mapping_ts = t0
             group.mapping_line = line
             mapping_lines.append(line)
-            unshifted_mode = True
+            unshifted_mode = first_window_has_circle
         else:
             # Fall 2 + normaler Shift-Flow
             ts = (
                 "00:10"
                 if idx == 0
-                else seconds_to_timestamp(groups[idx - 1].circle_window.start_sec)
+                else seconds_to_timestamp(groups[idx].circle_window.start_sec)
             )
             group.mapping_ts = ts
             line = build_verse_line(ts, group.verses)
@@ -288,17 +288,17 @@ def main() -> None:
     parser.add_argument(
         "--video",
         type=Path,
-        default="/home/muhammed-emin-eser/desk/din/quran/maher_workaround/Quran_cropped/سورة المدثر (74) بصوت القارئ الشيخ ماهر المعيقلي [C-BOnEXP9qA].text_only.mp4",
+        default="/home/muhammed-emin-eser/desk/din/quran/maher_workaround/Quran_cropped/سورة النصر (110) بصوت القارئ الشيخ ماهر المعيقلي [qFKt7_5cEJ0].text_only.mp4",
     )
     parser.add_argument(
         "--audio",
         type=Path,
-        default="/home/muhammed-emin-eser/desk/din/quran/maher_playlist/maher_playlist/سورة المدثر (74) بصوت القارئ الشيخ ماهر المعيقلي.flac",
+        default="/home/muhammed-emin-eser/desk/din/quran/maher_playlist/maher_playlist/سورة النصر (110) بصوت القارئ الشيخ ماهر المعيقلي.flac",
     )
     parser.add_argument(
         "--text",
         type=Path,
-        default="/home/muhammed-emin-eser/desk/din/quran/eng_translation/chunked_translation/74_Al-Muddathir.txt",
+        default="/home/muhammed-emin-eser/desk/din/quran/eng_translation/chunked_translation/110_An-Nasr.txt",
     )
     parser.add_argument(
         "--output",
@@ -307,7 +307,7 @@ def main() -> None:
         help="Ausgabeverzeichnis (Dateiname wird aus --text abgeleitet)",
     )
     parser.add_argument("--device", default=None, type=str)
-    parser.add_argument("--surah", type=int, help="Surah-Nummer (z.B. 98)", default=74)
+    parser.add_argument("--surah", type=int, help="Surah-Nummer (z.B. 98)", default=110)
     args = parser.parse_args()
 
     mapping_path = args.output / (args.text.stem + ".mapping")

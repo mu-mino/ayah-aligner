@@ -124,10 +124,6 @@ def wrap_ass_text(text: str, video_width: int, font_size: int) -> str:
 
         if current_line:
             wrapped_lines.append(" ".join(current_line))
-        if current_line and wrapped_lines and re.match(r"^[^\w\s]", current_line[0]):
-            symbol = current_line[0]
-            current_line[0] = current_line[0][1:]
-            wrapped_lines[-1] += " " + symbol if symbol else ""
 
     return "\n".join(wrapped_lines)
 
@@ -192,8 +188,8 @@ def karaoke_reveal_words(text: str) -> str:
 # ==========================================
 LLM = Llama(
     model_path="/home/muhammed-emin-eser/.cache/huggingface/hub/models--bartowski--Qwen2.5-14B-Instruct-GGUF/snapshots/05244aa5d871c661c80082a15d3bce44714d068d/Qwen2.5-14B-Instruct-Q4_K_M.gguf",
-    n_ctx=1000,
-    n_threads=8,
+    n_ctx=2000,
+    n_threads=12,
     n_gpu_layers=-1,
     verbose=True,
 )
@@ -209,7 +205,7 @@ COLOR_MAP = {
 # fmt: off
 
 REFERENCE_THEMES = {
-   "GOD": re.compile(r"(?i)(?:(?:al|ar|as|at|az|ad|ah|ak|aq|am|an|aw)[- ]?)?(?:ra[hk]?m[ae]?n|ra[hk]?[yi]m|malik|qudd[u]?s|sala[ae]?m|m[u']?min|'?az[yi]z|jabb[a]?r|mutakabbir|khal[i]?q|b[a]?ri[']?|mu[s]?awwir|ghaff[a]?r|qahh[a]?r|wahh[a]?b|razz[a]?q|fatta[eh]|'?ali[ae]?m|q[a]?bi[zd]|b[a]?si[tdt]|kh[a]?fi[dz]|r[a]?fi[']?|m[u']?izz|mudhill|s[a]?mi[']?|b[a]?si[ry]|h[a]?kam|'?adl|la[td]i[yf]|khab[yi]r|h[a]?li[ym]|'?a[z]?i[ym]|ghaf[uo]r|shak[uo]r|'?a[l]?i[']?|kab[yi]r|h[a]?fi[z]|muq[yi]t|h[a]?s[yi]b|jal[yi]l|kar[yi]m|r[a]?q[yi]b|muj[yi]b|w[a]?si[']?|h[a]?k[yi]m|wad[uo]d|maj[yi]d|b[a]?[']?ith|shah[yi]d|h[a]?qq|wak[yi]l|qaw[wi]|mat[yi]n|wal[yi]|h[a]?mi[zd]|muh[s]?[yi]|mubd[yi]|mu[']?[yi]d|muh[yi]|mum[yi]t|h[ae]yy|qayy[uo]m|w[a]?jid|w[a]?hid|'?a[h]?ad|s[a]?mad|q[a]?dir|muqtadir|muqaddim|mu[']?akhkhir|'?awwal|'?akhir|z[a]?hir|b[a]?tin|muta[']?ali|barr|taww[a]?b|muntaqim|'?afuww|ra[']?uf|n[uy]r|h[au]d[ae]|'?a[z]?h[ae]r|b[au]t[ae]?n|'?aww[ae]l|'?a[hk]i[r]|wali[ae]?|mawla[ae]?|nas[yi]r|q[ae]ri[bd]|m[au]ji[d]|shak[uo]r|'?al[yi]y[ae]?|'?a[zd]?h[ae]?m|'?a[kl]?r[ae]?m|'?a[hk]?s[ae]?n|'?aj[ae]?m[ae]?l|'?aj[ae]?w[ae]?d|'?ak[ae]?r[ae]?m|'?a[kl]?b[ae]?r|'?a'?l[ae]?|'?a'?z[ae]?|'?a'?z[ae]?m|'?a[hk]?f[ae]?d|'?a[hk]?f[ae]?z|'?a[hk]?k[ae]?m|'?a[hk]?l[ae]?q|'?a[hk]?m[ae]?d|'?a[hk]?n[ae]?|'?a[hk]?n[ae]?m|'?a[hk]?n[ae]?t|'?a[hk]?n[ae]?y|'?a[hk]?q[ae]?r|'?a[hk]?r[ae]?m|'?a[hk]?s[ae]?b|'?a[hk]?s[ae]?n|'?a[hk]?s[ae]?r|'?a[hk]?t[ae]?n|'?a[hk]?t[ae]?r|'?a[hk]?y[ae]?r|'?a[hk]?z[ae]?|'?a[hk]?z[ae]?m)(?:\s+(?:the\s+)?(?:all|most|oft)[- ]?(?:mighty|merciful|beneficent|great|high|generous|kind|just|near|forgiving|wise|knower|hearer|seer|aware|provider|strong|knowing|capable|holy|compassionate|majestic|glorious|living|eternal|subduer|avenger|sustainer|gracious|faithful|forbearing|magnificent|appreciative|preserver|reckoner|watchful|responsive|embracing|loving|resurrector|witness|truth|trustee|firm|friend|praiseworthy|originator|restorer|giver\s+of\s+life|taker\s+of\s+life|self[- ]subsisting|finder|one|unique|able|determined|expediter|delayer|first|last|manifest|hidden|patron|self[- ]exalted|source\s+of\s+goodness|acceptor\s+of\s+repentance|pardoner|kind|compeller|opener|withholder|expander|abaser|exalter|honorer|dishonorer|judge|subtle|all-just|all-forgiving|all-merciful|all-compassionate|all-majestic|all-glorious|mostholy|mostcompassionate|thebeneficent|themerciful|theforgiving|thejust|themighty|thewise|theliving|theeternal|thesubduer|theavenger))?(?:(?:allah|god|lord|albarr|omnipotentking|supremecreator|realbestower|ownerofpower|king|sovereign|master|creator|maker|fashioner|subduer|bestower|provider|opener|judge|avenger|pardoner|compeller|expander|abaser|exalter|honorer|dishonorer|withholder|subtle|gracious|faithful|forbearing|magnificent|appreciative|preserver|reckoner|watchful|responsive|loving|resurrector|witness|trustee|friend|praiseworthy|originator|restorer|finder|determined|expediter|delayer|manifest|patron|source\s+of\s+goodness|acceptor\s+of\s+repentance))", re.IGNORECASE), 
+   "GOD": re.compile(r"(?i)(?:(?:al|ar|as|at|az|ad|ah|ak|aq|am|an|aw)[- ]?)?(?:ra[hk]?m[ae]?n|ra[hk]?[yi]m|malik|qudd[u]?s|sala[ae]?m|m[u']?min|'?az[yi]z|jabb[a]?r|mutakabbir|khal[i]?q|b[a]?ri[']?|mu[s]?awwir|ghaff[a]?r|qahh[a]?r|wahh[a]?b|razz[a]?q|fatta[eh]|'?ali[ae]?m|q[a]?bi[zd]|b[a]?si[tdt]|kh[a]?fi[dz]|r[a]?fi[']?|m[u']?izz|mudhill|s[a]?mi[']?|b[a]?si[ry]|h[a]?kam|'?adl|la[td]i[yf]|khab[yi]r|h[a]?li[ym]|'?a[z]?i[ym]|ghaf[uo]r|shak[uo]r|'?a[l]?i[']?|kab[yi]r|h[a]?fi[z]|muq[yi]t|h[a]?s[yi]b|jal[yi]l|kar[yi]m|r[a]?q[yi]b|muj[yi]b|w[a]?si[']?|h[a]?k[yi]m|wad[uo]d|maj[yi]d|b[a]?[']?ith|shah[yi]d|h[a]?qq|wak[yi]l|qaw[wi]|mat[yi]n|wal[yi]|h[a]?mi[zd]|muh[s]?[yi]|mubd[yi]|mu[']?[yi]d|muh[yi]|mum[yi]t|h[ae]yy|qayy[uo]m|w[a]?jid|w[a]?hid|'?a[h]?ad|s[a]?mad|q[a]?dir|muqtadir|muqaddim|mu[']?akhkhir|'?awwal|'?akhir|z[a]?hir|b[a]?tin|muta[']?ali|barr|taww[a]?b|muntaqim|'?afuww|ra[']?uf|n[uy]r|h[au]d[ae]|'?a[z]?h[ae]r|b[au]t[ae]?n|'?aww[ae]l|'?a[hk]i[r]|wali[ae]?|mawla[ae]?|nas[yi]r|q[ae]ri[bd]|m[au]ji[d]|shak[uo]r|'?al[yi]y[ae]?|'?a[zd]?h[ae]?m|'?a[kl]?r[ae]?m|'?a[hk]?s[ae]?n|'?aj[ae]?m[ae]?l|'?aj[ae]?w[ae]?d|'?ak[ae]?r[ae]?m|'?a[kl]?b[ae]?r|'?a'?l[ae]?|'?a'?z[ae]?|'?a'?z[ae]?m|'?a[hk]?f[ae]?d|'?a[hk]?f[ae]?z|'?a[hk]?k[ae]?m|'?a[hk]?l[ae]?q|'?a[hk]?m[ae]?d|'?a[hk]?n[ae]?|'?a[hk]?n[ae]?m|'?a[hk]?n[ae]?t|'?a[hk]?n[ae]?y|'?a[hk]?q[ae]?r|'?a[hk]?r[ae]?m|'?a[hk]?s[ae]?b|'?a[hk]?s[ae]?n|'?a[hk]?s[ae]?r|'?a[hk]?t[ae]?n|'?a[hk]?t[ae]?r|'?a[hk]?y[ae]?r|'?a[hk]?z[ae]?|'?a[hk]?z[ae]?m)(?:\s+(?:the\s+)?(?:all|most|oft)[- ]?(?:mighty|merciful|beneficent|great|high|generous|kind|just|near|forgiving|wise|knower|hearer|seer|aware|provider|strong|knowing|capable|holy|compassionate|majestic|glorious|living|eternal|subduer|avenger|sustainer|gracious|faithful|forbearing|magnificent|appreciative|preserver|reckoner|watchful|responsive|embracing|loving|resurrector|witness|truth|trustee|firm|friend|praiseworthy|originator|restorer|giver\s+of\s+life|taker\s+of\s+life|self[- ]subsisting|finder|one|unique|able|determined|expediter|delayer|first|last|manifest|hidden|patron|self[- ]exalted|source\s+of\s+goodness|acceptor\s+of\s+repentance|pardoner|kind|compeller|opener|withholder|expander|abaser|exalter|honorer|dishonorer|judge|subtle|all-just|all-forgiving|all-merciful|all-compassionate|all-majestic|all-glorious|mostholy|mostcompassionate|thebeneficent|themerciful|theforgiving|thejust|themighty|thewise|theliving|theeternal|thesubduer|theavenger))|(?:(?:allah|god|lord|albarr|omnipotentking|supremecreator|realbestower|ownerofpower|king|sovereign|master|creator|maker|fashioner|subduer|bestower|provider|opener|judge|avenger|pardoner|compeller|expander|abaser|exalter|honorer|dishonorer|withholder|subtle|gracious|faithful|forbearing|magnificent|appreciative|preserver|reckoner|watchful|responsive|loving|resurrector|witness|trustee|friend|praiseworthy|originator|restorer|finder|determined|expediter|delayer|manifest|patron|source\s+of\s+goodness|acceptor\s+of\s+repentance))", re.IGNORECASE), 
     "DESTRUCTIVE": re.compile(
         r"^("
 r"hell(?:fire)?|blaze|blazing\s+fire|burning\s+fire|torment\w*|chastis\w*|punish\w*|tortur\w*|scourge\w*|doom\w*|disgrace\w*|"r"gehenna|jahannam|abyss|furnace|boiling\s+water|fetters|chains|"r"strik\w*|seiz\w*|destroy\w*|destruct\w*|curs\w*|reject\w*|belying|belied|wrath|anger|retribution|vengeance|penalty|calamity|ruin\w*|perish\w*|overthrow\w*|"r"painful|severe|grievous|miserable|awful|dreadful|terrible|heavy|wretched|wicked|scorching|"r"disbeliev\w*|unbeliev\w*|wrongdoer\w*|polytheist\w*|sinner\w*|arrogant\w*|transgress\w*|hypocri\w*|evildoer\w*|disobedien\w*|rebel\w*|insolent\w*|infidel\w*|idolater\w*|misguid\w*|stray\w*|"r"blasphem\w*|envy|envious|hatred|malice|regret\w*|remorse\w*|despair\w*"r")$"r"|saqar|saqr|hutamah|laz[aā]\w*|jah[iī]m|sa[iī]r|haawiyah|h[aaā]wiyah|"r"zaqqum|zaqq[ou]*m|ghisl[iī]n|ghass[aa]*q|ham[iī]m|"r"sijjin|sijji[n]|al-sijjin|"r"dari\w*|dhar[iī]\w*|samum\w*|samoom\w*|dukhan\w*|"r"fir['`]?[aā]wn\w*|pharaoh\w*|"r"tham[uū]d\w*|samood\w*|"r"(?:['`]?)?aad\w*|"r"madyan\w*|midianit\w*|"r"q[aaā]r[uū]n\w*|korah\w*|"r"ab[uū]\s+lahab|lahab\w*|"r"nimrod\w*|"r"sodom\w*|gomorrah\w*|tubba\w*|"r"sting\w*|miser\w*|miserl\w*|"r"boast\w*|vainglor\w*|"r"slander\w*|backbit\w*|"r"mock\w*|ridicul\w*|"r"corrupt\w*|corrupter\w*|"r"oppress\w*|oppressor\w*|"r"tyrann\w*|"r"ingrat\w*|ungrateful\w*|"r"deceiv\w*|decepti\w*|"r"heedless\w*|"r"greed\w*|avaric\w*|covet\w*|"r"nif[aaā]q\w*|mun[aaā]fiq\w*|"r"shirk\w*|mushrik\w*|mushrik[ou]n|"r"bagh[yī]\w*|"r"fas[aaā]d\w*|mufsid\w*|"r"rijs\w*|rijz\w*|"r"najis\w*|"r"fitnah\w*",re.IGNORECASE,),
@@ -220,12 +216,6 @@ r"paradise|garden\w*|eden|jannah|firdaus|abode\s+of\s+peace|"r"light|peace|bliss
 
 # mock_json="""{"labels":[{"word":"Al-Muddathir","category":"GOD"},{"word":"ARISE","category":"CONSTRUCTIVE"},{"word":"WARN","category":"DESTRUCTIVE"},{"word":"ALLAH","category":"GOD"},{"word":"purify","category":"CONSTRUCTIVE"},{"word":"Ar-Rujz","category":"DESTRUCTIVE"},{"word":"give","category":"CONSTRUCTIVE"},{"word":"deeds","category":"CONSTRUCTIVE"},{"word":"obedience","category":"CONSTRUCTIVE"},{"word":"patient","category":"CONSTRUCTIVE"},{"word":"transgressors","category":"DESTRUCTIVE"},{"word":"Allah","category":"GOD"},{"word":"Trumpet","category":"DESTRUCTIVE"},{"word":"gather","category":"CONSTRUCTIVE"},{"word":"Hard","category":"DESTRUCTIVE"},{"word":"disbelievers","category":"DESTRUCTIVE"},{"word":"Al-Waleed","category":"GOD"},{"word":"bin","category":"GOD"},{"word":"Al-Mugheerah","category":"GOD"},{"word":"Al-Makhzoomee","category":"GOD"},{"word":"granted","category":"CONSTRUCTIVE"},{"word":"abundance","category":"CONSTRUCTIVE"},{"word":"smooth","category":"CONSTRUCTIVE"},{"word":"comfortable","category":"CONSTRUCTIVE"},{"word":"God","category":"GOD"},{"word":"strength","category":"CONSTRUCTIVE"},{"word":"rock","category":"CONSTRUCTIVE"},{"word":"hills","category":"CONSTRUCTIVE"},{"word":"understanding","category":"CONSTRUCTIVE"},{"word":"formed","category":"CONSTRUCTIVE"},{"word":"stubborn","category":"DESTRUCTIVE"},{"word":"opposing","category":"DESTRUCTIVE"},{"word":"torment","category":"DESTRUCTIVE"},{"word":"Verily","category":"GOD"},{"word":"cursed","category":"DESTRUCTIVE"},{"word":"plotted","category":"DESTRUCTIVE"},{"word":"plot","category":"DESTRUCTIVE"},{"word":"god","category":"GOD"},{"word":"create","category":"CONSTRUCTIVE"},{"word":"destroy","category":"DESTRUCTIVE"},{"word":"life","category":"CONSTRUCTIVE"},{"word":"death","category":"DESTRUCTIVE"},{"word":"frowned","category":"DESTRUCTIVE"}]}"""
 # fmt: on
-
-
-import json
-
-
-import json
 
 
 def check_semantics(sentence, matches):
@@ -253,12 +243,24 @@ def check_semantics(sentence, matches):
     2. DESTRUCTIVE (Sin, Disbelief, Punishment, and Cosmic Destruction)
     - MUST match explicit acts of destruction, divine punishment, torment (e.g., Hell, punishment, doom).
     - MUST match terms of ultimate spiritual failure, rebellion, or sin: This explicitly includes "disbelievers" (Kafir), "sinners/criminals" (Mujrim), hypocrites, arrogance against God, and major sins.
+    - MUST map the strict thematic connection between the Type of Sinner (e.g., Kafir, Mujrim, Munafiq, Taghut), their Specific Rebellion, and the corresponding Mirror Punishment. 
+    - MUST include specific eschatological names of Layers of Hell and Torment (e.g., Saqar, Hutamah, Laza, Sa'ir, Jahim, Hawiyah, Sijjin). You will recognize what is meant by the word from the context: Is it connected to punishment? A warning? A threat? Then it will match the category. 
+    - MUST include deadly, non-nourishing Destructive Flora, Foods, and Liquids designed to inflict physical agony (e.g., Zaqqum, Ghislin, Hamim, Ghassaq, Dhari').
+    - MUST include manifestations of Cosmic Destruction, Weather Catastrophes, and Divine Wrath Weapons used to obliterate rebellious civilizations (e.g., Hijarah min Sijzil, Sarsar, Sayhah, Al-Khasf, Al-Qari'ah). But only in context of punishment.
+    -RITERIA: If the word embodies spiritual ruin, hostility to truth, or physical destruction, it is DESTRUCTIVE.
+    - MUST encompass the full scale of divine confrontation, including explicit acts of threatening, wrath, warning, rebuking, humiliating, exclaiming/refuting, admonishing, and punishing.
     - CRITERIA: If the word embodies spiritual ruin, hostility to truth, or physical destruction, it is DESTRUCTIVE.
 
-    3. CONSTRUCTIVE (Faith, Virtue, Divine Reward, and Creation)
-    - MUST match explicit acts of creation, guidance, purification, and virtue (e.g., patience, charity).
-    - MUST match terms of spiritual success and obedience: This explicitly includes "believers" (Mu'min), "the righteous", "angels" (as agents of divine good), and divine rewards (e.g., Paradise, blessings).
-    - CRITERIA: If the word embodies spiritual success, divine alignment, moral virtue, or creation, it is CONSTRUCTIVE.
+
+    3. CONSTRUCTIVE (Faith, Virtue, Divine Reward, and Cosmic Creation)
+    - MUST match explicit acts of creation, divine reward and ultimate bliss regarding rewards from God (e.g., Paradise/Jannah, eternal life, ultimate success/Falah).
+    - MUST match terms of ultimate spiritual success, obedience, or virtue: This explicitly includes "believers" (Mu'min), "the righteous/pious" (Abrar/Muttaqin), "the close ones" (Muqarrabun), humility before God, and major virtues and qualities praised by God.
+    - MUST map the strict thematic connection between the Type of Believer (e.g., Mu'min, Sabiq, Muhsin), their Specific Virtue/Sacrifice, and the corresponding Mirror Reward. 
+    - MUST include specific eschatological names of Layers of Paradise and Ultimate Peace (e.g., Firdaws, 'Adn, Na'im, Ma'wa, Darus-Salam, Illiyyin). You will recognize what is meant by the word from the context: Is it connected to reward? A glad tiding? A promise of peace? Then it will match the category. 
+    - MUST include heavenly, deeply nourishing Constructive Flora, Foods, and Liquids designed to inflict absolute bliss and eternal satisfaction (e.g., Tuba-Tree, Tasnim, Salsabil, Kauthar, pure milk, clarified honey, non-intoxicating wine).
+    - MUST include manifestations of Cosmic Creation, Life-giving Weather, and Divine Mercy Shields used to bless, revive, or protect righteous civilizations (e.g., Sakinah/Divine Tranquility, life-giving rain/Ghaith, expanding of the heavens, protective shade/Zil, Angels, Blessings). Always in the context of blessing and reward.
+    - MUST encompass the full scale of divine grace and welcoming connection, including explicit acts of bringing glad tidings (Bashara), love (Wudd/Mahabbah), praising/honoring, purifying (tazkiyah), guiding (hidayah), forgiving (ghufran), embracing/protecting (hifz), and rewarding.
+    - CRITERIA: If the word embodies spiritual success, divine alignment, moral virtue, life-giving creation, or ultimate peace, it is CONSTRUCTIVE.
 
     SENTENCE:
     \"\"\"{sentence}\"\"\"
@@ -275,8 +277,9 @@ def check_semantics(sentence, matches):
         "3": true,
         "7": false
     }}"""
+    print(f"{'#' * 55} \nMATCHES: \n\t{matches} \n{'#' * 55}")
 
-    output = LLM(prompt, max_tokens=512, temperature=0.0)
+    output = LLM(prompt, temperature=0.0)
     text = output["choices"][0]["text"].strip()
 
     try:

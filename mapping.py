@@ -73,6 +73,8 @@ class WindowGroup:
 
 def _load_gray(video_path: Path, window: FrameWindow):
     """Lädt den mittleren Frame eines FrameWindow als Graustufenbild."""
+    if window.end_sec - window.start_sec < 1:
+        return None
     info = run_ffprobe(video_path)
     mid_sec = (window.start_sec + window.end_sec) / 2.0
     frame_idx = int(mid_sec * info.fps)
@@ -302,9 +304,8 @@ def main() -> None:
     )
     parser.add_argument(
         "--output",
-        default=str(BASE_DIR / "output" / "mapping"),
-        type=Path,
         help="Ausgabeverzeichnis (Dateiname wird aus --text abgeleitet)",
+        default=Path("./output/mapping"),
     )
     parser.add_argument("--device", default=None, type=str)
     parser.add_argument("--surah", type=int, help="Surah-Nummer (z.B. 98)", default=74)

@@ -1,8 +1,3 @@
-import requests
-import shlex
-import paramiko
-import sys
-import time
 import json
 import os
 import glob
@@ -10,6 +5,7 @@ import re
 from pathlib import Path
 from typing import Optional, List, Tuple
 import stanza
+from openai import OpenAI
 
 stanza.download("en", processors="tokenize,pos")
 nlp = stanza.Pipeline("en", processors="tokenize,pos", use_gpu=True, quiet=True)
@@ -53,20 +49,6 @@ def parse_text_file(path: Path) -> Tuple[List[str], List[str]]:
     return title_lines, numbered_lines
 
 
-def split_into_sentences(text: str) -> list:
-    """
-    Trennt einen Text in Sätze auf.
-    Hier simpel gelöst durch Satzzeichen. Bei Bedarf durch NLTK/Spacy ersetzen.
-    """
-    sentences = re.split(r"(?<=[.!?])\s+", text.strip())
-    return [s for s in sentences if s]
-
-
-def split_into_tokens(sentence: str) -> list:
-    """Trennt einen Satz in einzelne Wörter (Tokens)."""
-    return re.findall(r"\b\w+\b|[^\w\s]", sentence)
-
-
 # --- Die Haupt-Generator-Funktion ---
 
 
@@ -75,43 +57,59 @@ def process_directory(directory_path: str):
     Liest alle .txt Dateien über parse_text_file ein und verarbeitet die nummerierten Verse.
     Yieldet pro Datei: (filepath, file_structure)
     """
-    search_pattern = os.path.join(directory_path, "*.txt")
+    search_pattern = "/home/muhammed-emin-eser/desk/din/quran/eng_translation/chunked_translation/*.txt"
+    alle_dateien = list(glob.iglob(search_pattern))
 
-    for filepath in glob.iglob(search_pattern):
-        file_structure = []  # Hält alle Verse dieser Datei
-        path_obj = Path(filepath)
+    json_pattern = os.path.join(
+        "/home/muhammed-emin-eser/desk/din/quran/llm_json/", "*.json"
+    )
+    existing_json_names = {
+        os.path.splitext(os.path.basename(f))[0].replace("_output", "")
+        for f in glob.glob(json_pattern)
+    }
 
-        # Verwende deine neue sequenzielle Parsing-Logik
-        _, numbered_lines = parse_text_file(path_obj)
+    def extrahiere_zahl(pfad):
+        zahlen = re.findall(r"\d+", pfad)
+        return int(zahlen[-1]) if zahlen else 0
 
-        # Verarbeite die extrahierten, nummerierten Verse
-        # Da numbered_lines sequenziell ab Vers 1 befüllt wird, nutzen wir enumerate(..., start=1)
-        for verse_idx, verse_text in enumerate(numbered_lines, start=1):
-            if verse_text:
-                verse_structure = {"verse_number": verse_idx, "sentences": []}
+    alle_dateien.sort(key=extrahiere_zahl, reverse=True)
 
-                sentences = split_into_sentences(verse_text)
+    for file_path in alle_dateien:
+        print(f"Verarbeite in REIHENFOLGE: {file_path}")
+        txt_name = os.path.splitext(os.path.basename(file_path))[0]
+        if txt_name not in existing_json_names:
+            file_structure = []
+            path_obj = Path(file_path)
 
-                for sentence in sentences:
-                    tokens = split_into_tokens(sentence)
-                    matches = extract_meaningful_tokens(sentence)
+            # Verwende deine neue sequenzielle Parsing-Logik
+            _, numbered_lines = parse_text_file(path_obj)
+
+            # Verarbeite die extrahierten, nummerierten Verse
+            # Da numbered_lines sequenziell ab Vers 1 befüllt wird, nutzen wir enumerate(..., start=1)
+            for verse_idx, verse_text in enumerate(numbered_lines, start=1):
+                if verse_text:
+                    verse_structure = {"verse_number": verse_idx, "sentences": []}
+
+                    matches = [extract_meaningful_tokens(verse_text)]
 
                     # LLM semantische Prüfung aufrufen (gibt Dict zurück: {index: "KATEGORIE"})
-                    decisions = check_semantics(sentences, sentence, matches)
+                    decisions = check_semantics(verse_text, matches)
 
                     # Gefundene Kategorien in die Matches-Struktur integrieren
-                    for m in matches:
+                    for m in matches[0]:
                         idx = m["index"]
+
                         if idx in decisions:
                             m["category"] = decisions[idx]
-
                     verse_structure["sentences"].append(
-                        {"sentence_context": sentence, "tokens": matches}
+                        {"sentence_context": verse_text, "tokens": matches}
                     )
 
                 file_structure.append(verse_structure)
+        else:
+            continue
 
-        yield filepath, file_structure
+        yield file_path, file_structure
 
 
 def extract_meaningful_tokens(sentence: str) -> list:
@@ -142,41 +140,8 @@ def extract_meaningful_tokens(sentence: str) -> list:
 # --- Semantische Analyse ---
 
 
-def run_llama(prompt):
-    url = "http://127.0.0.1:8080/completion"
+def run_llama(verse, targets_string):
 
-    headers = {"Content-Type": "application/json"}
-
-    payload = {
-        "prompt": prompt,
-        "temperature": 0.0,
-        "n_predict": 256,
-        "stop": ["}", "<|im_end|>", "<|endoftext|>"],
-    }
-    response = requests.post(url, headers=headers, json=payload)
-
-    if response.status_code == 200:
-        result_json = response.json()
-        ki_text_output = result_json.get("content", "")
-        if not ki_text_output.endswith("}"):
-            ki_text_output = ki_text_output.replace("'", "") + "}"
-        print("Gefiltertes Ergebnis:")
-        print(json.dumps(ki_text_output, indent=2))
-        return ki_text_output
-    else:
-        print(f"Fehler beim Server-Aufruf: {response.status_code}")
-        bereinigtes_ergebnis = {}
-        return bereinigtes_ergebnis
-
-
-def check_semantics(verse, sentence, tokens):
-    """
-    matches: Liste von Dicts/Tuples, z.B.:
-             [{"index": 3, "word": "Gott"}, ...]
-    """
-    targets_string = "\n".join(
-        [f'- Index {m["index"]}: "{m["word"]}" )' for m in tokens]
-    )
     prompt = f"""
     You are a precise semantic validation engine.
     TASK:
@@ -223,14 +188,6 @@ def check_semantics(verse, sentence, tokens):
     - Common nouns that are neutral (e.g., "people", "men", "day", "time") when not explicitly tied to one of the three categories.
     - If a word belongs clearly to GOD/DESTRUCTIVE/CONSTRUCTIVE, do NOT use NONE.
 
-    CONTEXT:
-    "{verse}"
-
-    SENTENCE:
-    "{sentence}"
-
-    TARGET WORDS TO VERIFY:
-    {targets_string}
 
     OUTPUT RULE:
     Your response must be a valid JSON object where the keys are the string representation of the indexes, and values are the assigned category strings.
@@ -243,10 +200,62 @@ def check_semantics(verse, sentence, tokens):
     }}
     """
 
-    print(f"{'#' * 55} \nTOKENS: \n\t{tokens} \n{'#' * 55}")
-    safe = shlex.quote(prompt)
+    try:
+        client = OpenAI(
+            api_key="sk-ws-H.IEDDEX.RqQn.MEYCIQDXufYP1QkVhsy8CYvgtWKM6itnCPzplRhHpsXmo1DAxAIhAN0P_Na2bxg43pfEekm7S58u0IeeJfU5jmAxXLT4beRv",
+            base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+        )
 
-    decisions = run_llama(safe)
+        response = client.chat.completions.create(
+            model="qwen3.7-max",
+            temperature=0.0,
+            messages=[
+                {
+                    "role": "system",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": f"{prompt}",
+                            "cache_control": {"type": "ephemeral"},
+                        }
+                    ],
+                },
+                {
+                    "role": "user",
+                    "content": f"""
+                VERSE:
+                "{verse}"
+
+                TARGET WORDS TO VERIFY:
+                {targets_string}
+            """,
+                },
+            ],
+        )
+        ki_text_output = response.choices[0].message.content
+        print(
+            f"Cache created: {response.usage.prompt_tokens_details.cache_creation_input_tokens}"
+        )
+        print(f"Cache hit: {response.usage.prompt_tokens_details.cached_tokens}")
+        print(ki_text_output)
+    except Exception as e:
+        print(f"Error message: {e}")
+        RuntimeError("Non ok Status Code")
+
+    return ki_text_output
+
+
+def check_semantics(verse, tokens):
+    """
+    matches: Liste von Dicts/Tuples, z.B.:
+             [{"index": 3, "word": "Gott"}, ...]
+    """
+    targets_string = "\n".join(
+        [f'- Index {m["index"]}: "{m["word"]}" )' for v in tokens for m in v]
+    )
+
+    print(f"{'#' * 55} \nTOKENS: \n\t{tokens} \n{'#' * 55}")
+    decisions = run_llama(verse, targets_string)
     try:
         decisions = {int(k): v for k, v in json.loads(decisions).items()}
 
@@ -256,15 +265,16 @@ def check_semantics(verse, sentence, tokens):
     # Konsolen-Validierung (bunter Satz)
     GRUEN = "\033[32m"
     RESET = "\033[0m"
-    worte = sentence.split()
-    for m in tokens:
-        idx = m["index"]
-        if idx < len(worte) and decisions.get(idx):
-            worte[idx] = f"{GRUEN}{worte[idx]}{RESET}"
-    bunter_satz = " ".join(worte)
+    worte = verse.split()
+    for v in tokens:
+        for m in v:
+            idx = m["index"]
+            if idx < len(worte) and decisions.get(idx):
+                worte[idx] = f"{GRUEN}{worte[idx]}{RESET}"
+        bunter_satz = " ".join(worte)
 
-    ausgabe = f"{'#' * 55}\nSENTENCE: \t {bunter_satz}\n{'#' * 55}\nDECISIONS: \t {decisions}\n\n\n"
-    print(ausgabe)
+        ausgabe = f"{'#' * 55}\nSENTENCE: \t {bunter_satz}\n{'#' * 55}\nDECISIONS: \t {decisions}\n\n\n"
+        print(ausgabe)
 
     return decisions
 
@@ -300,36 +310,40 @@ if __name__ == "__main__":
 
     file_generator = process_directory(ORDNER_PFAD)
     dateien_zaehler = 0
-
     for file_path, file_data in file_generator:
         dateien_zaehler += 1
         print(f"\nVerarbeite Datei: {file_path}")
 
         detected_matches = []
 
-        # Hier flachen wir die Struktur ab, um das finale, persistente JSON-Format zu füllen
         for verse in file_data:
             v_num = verse["verse_number"]
 
             for sentence_node in verse["sentences"]:
                 context = sentence_node["sentence_context"]
 
-                for token in sentence_node["tokens"]:
-                    category = token.get("category")
+                for token_entry in sentence_node["tokens"]:
+                    if isinstance(token_entry, list):
+                        sub_tokens = token_entry
+                    else:
+                        sub_tokens = [token_entry]
 
-                    # Abgleich mit der Farbtabelle und persistentes Abspeichern
-                    if category in COLOR_MAP:
-                        detected_matches.append(
-                            {
-                                "file_reference": file_path,
-                                "verse_number": v_num,
-                                "sentence_context": context,
-                                "word_index": token["index"],
-                                "word": token["word"],
-                                "category": category,
-                                "color": COLOR_MAP[category],
-                            }
-                        )
+                    for token in sub_tokens:
+                        category = token.get(
+                            "category"
+                        )  # abgleich mit der farbtabelle und persistentes abspeichern
+                        if category in COLOR_MAP:
+                            detected_matches.append(
+                                {
+                                    "file_reference": file_path,
+                                    "verse_number": v_num,
+                                    "sentence_context": context,
+                                    "word_index": token["index"],
+                                    "word": token["word"],
+                                    "category": category,
+                                    "color": COLOR_MAP[category],
+                                }
+                            )
 
         # Persistent abspeichern (Erstellt ein valides JSON direkt neben der .txt-Datei)
         if detected_matches:

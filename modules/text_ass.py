@@ -5,14 +5,30 @@ import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Dict
 import numpy as np
 from llama_cpp import Llama
+from pyparsing import originalTextFor, nestedExpr, CharsNotIn
+
+LLM = Llama(
+    model_path="/home/muhammed-emin-eser/.cache/huggingface/hub/models--bartowski--Qwen2.5-14B-Instruct-GGUF/snapshots/05244aa5d871c661c80082a15d3bce44714d068d/Qwen2.5-14B-Instruct-Q4_K_M.gguf",
+    n_ctx=6000,
+    n_threads=12,
+    n_gpu_layers=-1,
+    verbose=True,
+)
+
 
 TS_RE = re.compile(
     r"^\[(?:(?P<h>\d{2}):)?(?P<m>\d{2}):(?P<s>\d{2})\]\s*::\s*(?P<txt>.*)\s*$"
     r"|^\[(?P<m2>\d{2}):(?P<s2>\d{2})\]\s*::\s*(?P<txt2>.*)\s*$"
 )
+COLOR_MAP = {
+    "GOD": "&H75DFFA&",  # Majestätisches Gelbgold
+    "DESTRUCTIVE": "&H6212B2&",  # Alarmierendes Hellrot
+    "CONSTRUCTIVE": "&H803500&",  # Blau
+    "NONE": "&H00FFFFFF",
+}
 
 
 @dataclass
@@ -183,131 +199,6 @@ def karaoke_reveal_words(text: str) -> str:
     return r"\N".join(rendered_lines)
 
 
-# ==========================================
-# LLM INITIALISIERUNG & PROMPT CONFIG
-# ==========================================
-LLM = Llama(
-    model_path="/home/muhammed-emin-eser/.cache/huggingface/hub/models--bartowski--Qwen2.5-14B-Instruct-GGUF/snapshots/05244aa5d871c661c80082a15d3bce44714d068d/Qwen2.5-14B-Instruct-Q4_K_M.gguf",
-    n_ctx=2000,
-    n_threads=12,
-    n_gpu_layers=-1,
-    verbose=True,
-)
-
-ALLOWED_LABELS = ["GOD", "DESTRUCTIVE", "CONSTRUCTIVE"]
-
-COLOR_MAP = {
-    "GOD": "&H75DFFA&",  # Majestätisches Gelbgold
-    "DESTRUCTIVE": "&H6212B2&",  # Alarmierendes Hellrot
-    "CONSTRUCTIVE": "&H803500&",  # Blau
-}
-
-# fmt: off
-
-REFERENCE_THEMES = {
-   "GOD": re.compile(r"(?i)(?:(?:al|ar|as|at|az|ad|ah|ak|aq|am|an|aw)[- ]?)?(?:ra[hk]?m[ae]?n|ra[hk]?[yi]m|malik|qudd[u]?s|sala[ae]?m|m[u']?min|'?az[yi]z|jabb[a]?r|mutakabbir|khal[i]?q|b[a]?ri[']?|mu[s]?awwir|ghaff[a]?r|qahh[a]?r|wahh[a]?b|razz[a]?q|fatta[eh]|'?ali[ae]?m|q[a]?bi[zd]|b[a]?si[tdt]|kh[a]?fi[dz]|r[a]?fi[']?|m[u']?izz|mudhill|s[a]?mi[']?|b[a]?si[ry]|h[a]?kam|'?adl|la[td]i[yf]|khab[yi]r|h[a]?li[ym]|'?a[z]?i[ym]|ghaf[uo]r|shak[uo]r|'?a[l]?i[']?|kab[yi]r|h[a]?fi[z]|muq[yi]t|h[a]?s[yi]b|jal[yi]l|kar[yi]m|r[a]?q[yi]b|muj[yi]b|w[a]?si[']?|h[a]?k[yi]m|wad[uo]d|maj[yi]d|b[a]?[']?ith|shah[yi]d|h[a]?qq|wak[yi]l|qaw[wi]|mat[yi]n|wal[yi]|h[a]?mi[zd]|muh[s]?[yi]|mubd[yi]|mu[']?[yi]d|muh[yi]|mum[yi]t|h[ae]yy|qayy[uo]m|w[a]?jid|w[a]?hid|'?a[h]?ad|s[a]?mad|q[a]?dir|muqtadir|muqaddim|mu[']?akhkhir|'?awwal|'?akhir|z[a]?hir|b[a]?tin|muta[']?ali|barr|taww[a]?b|muntaqim|'?afuww|ra[']?uf|n[uy]r|h[au]d[ae]|'?a[z]?h[ae]r|b[au]t[ae]?n|'?aww[ae]l|'?a[hk]i[r]|wali[ae]?|mawla[ae]?|nas[yi]r|q[ae]ri[bd]|m[au]ji[d]|shak[uo]r|'?al[yi]y[ae]?|'?a[zd]?h[ae]?m|'?a[kl]?r[ae]?m|'?a[hk]?s[ae]?n|'?aj[ae]?m[ae]?l|'?aj[ae]?w[ae]?d|'?ak[ae]?r[ae]?m|'?a[kl]?b[ae]?r|'?a'?l[ae]?|'?a'?z[ae]?|'?a'?z[ae]?m|'?a[hk]?f[ae]?d|'?a[hk]?f[ae]?z|'?a[hk]?k[ae]?m|'?a[hk]?l[ae]?q|'?a[hk]?m[ae]?d|'?a[hk]?n[ae]?|'?a[hk]?n[ae]?m|'?a[hk]?n[ae]?t|'?a[hk]?n[ae]?y|'?a[hk]?q[ae]?r|'?a[hk]?r[ae]?m|'?a[hk]?s[ae]?b|'?a[hk]?s[ae]?n|'?a[hk]?s[ae]?r|'?a[hk]?t[ae]?n|'?a[hk]?t[ae]?r|'?a[hk]?y[ae]?r|'?a[hk]?z[ae]?|'?a[hk]?z[ae]?m)(?:\s+(?:the\s+)?(?:all|most|oft)[- ]?(?:mighty|merciful|beneficent|great|high|generous|kind|just|near|forgiving|wise|knower|hearer|seer|aware|provider|strong|knowing|capable|holy|compassionate|majestic|glorious|living|eternal|subduer|avenger|sustainer|gracious|faithful|forbearing|magnificent|appreciative|preserver|reckoner|watchful|responsive|embracing|loving|resurrector|witness|truth|trustee|firm|friend|praiseworthy|originator|restorer|giver\s+of\s+life|taker\s+of\s+life|self[- ]subsisting|finder|one|unique|able|determined|expediter|delayer|first|last|manifest|hidden|patron|self[- ]exalted|source\s+of\s+goodness|acceptor\s+of\s+repentance|pardoner|kind|compeller|opener|withholder|expander|abaser|exalter|honorer|dishonorer|judge|subtle|all-just|all-forgiving|all-merciful|all-compassionate|all-majestic|all-glorious|mostholy|mostcompassionate|thebeneficent|themerciful|theforgiving|thejust|themighty|thewise|theliving|theeternal|thesubduer|theavenger))|(?:(?:allah|god|lord|albarr|omnipotentking|supremecreator|realbestower|ownerofpower|king|sovereign|master|creator|maker|fashioner|subduer|bestower|provider|opener|judge|avenger|pardoner|compeller|expander|abaser|exalter|honorer|dishonorer|withholder|subtle|gracious|faithful|forbearing|magnificent|appreciative|preserver|reckoner|watchful|responsive|loving|resurrector|witness|trustee|friend|praiseworthy|originator|restorer|finder|determined|expediter|delayer|manifest|patron|source\s+of\s+goodness|acceptor\s+of\s+repentance))", re.IGNORECASE), 
-    "DESTRUCTIVE": re.compile(
-        r"^("
-r"hell(?:fire)?|blaze|blazing\s+fire|burning\s+fire|torment\w*|chastis\w*|punish\w*|tortur\w*|scourge\w*|doom\w*|disgrace\w*|"r"gehenna|jahannam|abyss|furnace|boiling\s+water|fetters|chains|"r"strik\w*|seiz\w*|destroy\w*|destruct\w*|curs\w*|reject\w*|belying|belied|wrath|anger|retribution|vengeance|penalty|calamity|ruin\w*|perish\w*|overthrow\w*|"r"painful|severe|grievous|miserable|awful|dreadful|terrible|heavy|wretched|wicked|scorching|"r"disbeliev\w*|unbeliev\w*|wrongdoer\w*|polytheist\w*|sinner\w*|arrogant\w*|transgress\w*|hypocri\w*|evildoer\w*|disobedien\w*|rebel\w*|insolent\w*|infidel\w*|idolater\w*|misguid\w*|stray\w*|"r"blasphem\w*|envy|envious|hatred|malice|regret\w*|remorse\w*|despair\w*"r")$"r"|saqar|saqr|hutamah|laz[aā]\w*|jah[iī]m|sa[iī]r|haawiyah|h[aaā]wiyah|"r"zaqqum|zaqq[ou]*m|ghisl[iī]n|ghass[aa]*q|ham[iī]m|"r"sijjin|sijji[n]|al-sijjin|"r"dari\w*|dhar[iī]\w*|samum\w*|samoom\w*|dukhan\w*|"r"fir['`]?[aā]wn\w*|pharaoh\w*|"r"tham[uū]d\w*|samood\w*|"r"(?:['`]?)?aad\w*|"r"madyan\w*|midianit\w*|"r"q[aaā]r[uū]n\w*|korah\w*|"r"ab[uū]\s+lahab|lahab\w*|"r"nimrod\w*|"r"sodom\w*|gomorrah\w*|tubba\w*|"r"sting\w*|miser\w*|miserl\w*|"r"boast\w*|vainglor\w*|"r"slander\w*|backbit\w*|"r"mock\w*|ridicul\w*|"r"corrupt\w*|corrupter\w*|"r"oppress\w*|oppressor\w*|"r"tyrann\w*|"r"ingrat\w*|ungrateful\w*|"r"deceiv\w*|decepti\w*|"r"heedless\w*|"r"greed\w*|avaric\w*|covet\w*|"r"nif[aaā]q\w*|mun[aaā]fiq\w*|"r"shirk\w*|mushrik\w*|mushrik[ou]n|"r"bagh[yī]\w*|"r"fas[aaā]d\w*|mufsid\w*|"r"rijs\w*|rijz\w*|"r"najis\w*|"r"fitnah\w*",re.IGNORECASE,),
-    "CONSTRUCTIVE": re.compile(
-        r"^("
-r"paradise|garden\w*|eden|jannah|firdaus|abode\s+of\s+peace|"r"light|peace|bliss|mercy|grace|glor\w*|victory|victor\w*|bount\w*|favor\w*|salvation|prosperity|"r"forgiv\w*|pardon\w*|guid\w*|purif\w*|save\w*|admit\w*|reward\w*|rejoic\w*|triumph\w*|bless\w*|"r"beautiful|pure|eternal|successful|radiant|noble|trustworthy|truth|glorio\w*|content\w*|"r"believer\w*|righteous\w*|pious|humble|muttaqoon|muslim\w*|submitter\w*|patient|steadfast\w*|devout\w*|repent\w*|good-doer\w*|truthful|"r"qanit\w*|sabir\w*|tawwab\w*|"r"tawakkul\w*|sabr\w*|rid[aaā]\w*|contentment\w*"r")$"r"|kawthar\w*|"r"tasn[iī]m\w*|"r"salsab[iī]l\w*|"r"ma['`]?i[nī]?n\w*|zanjab[iī]l\w*|kaf[uū]r\w*|salhab\w*|"r"israfil\w*|azra['`]?il\w*|harut\w*|marut\w*|"r"houri\w*|hur\w*|"r"sidrat\w*|sidrah\w*|"r"illiyy[iī]n\w*|"r"ridw[aaā]n\w*|"r"sak[iī]nah\w*|"r"shukr\w*|shakir\w*|shak[uu]r\w*|grateful\w*|thankful\w*|"r"ikhl[aaā]s\w*|sincere\w*|sincerity|"r"taqw[aaā]\w*|god[-]fearing|god[-]conscious|"r"ihs[aaā]n\w*|muhsin\w*|excellent\w*|"r"salih\w*|s[aā]lih\w*|"r"aww[aaā]b\w*|"r"martyr\w*|shah[iī]d\w*|shuhad[aa]*\w*|"r"muqarrab\w*|near[-]brought|nearest\s+to\s+allah|"r"jibr[iī]l\w*|gabrie?l\w*|"r"m[iī]k[aaā]l\w*|michae?l\w*|"r"ridwan\w*|"r"guardian[-]angel\w*|"r"keepers?\s+of\s+paradise|"r"companions?\s+of\s+the\s+right|"r"people\s+of\s+the\s+right|"r"right[-]handed|"r"sidd[iī]q\w*|truthful[-]one\w*",re.IGNORECASE,),
-}
-
-# mock_json="""{"labels":[{"word":"Al-Muddathir","category":"GOD"},{"word":"ARISE","category":"CONSTRUCTIVE"},{"word":"WARN","category":"DESTRUCTIVE"},{"word":"ALLAH","category":"GOD"},{"word":"purify","category":"CONSTRUCTIVE"},{"word":"Ar-Rujz","category":"DESTRUCTIVE"},{"word":"give","category":"CONSTRUCTIVE"},{"word":"deeds","category":"CONSTRUCTIVE"},{"word":"obedience","category":"CONSTRUCTIVE"},{"word":"patient","category":"CONSTRUCTIVE"},{"word":"transgressors","category":"DESTRUCTIVE"},{"word":"Allah","category":"GOD"},{"word":"Trumpet","category":"DESTRUCTIVE"},{"word":"gather","category":"CONSTRUCTIVE"},{"word":"Hard","category":"DESTRUCTIVE"},{"word":"disbelievers","category":"DESTRUCTIVE"},{"word":"Al-Waleed","category":"GOD"},{"word":"bin","category":"GOD"},{"word":"Al-Mugheerah","category":"GOD"},{"word":"Al-Makhzoomee","category":"GOD"},{"word":"granted","category":"CONSTRUCTIVE"},{"word":"abundance","category":"CONSTRUCTIVE"},{"word":"smooth","category":"CONSTRUCTIVE"},{"word":"comfortable","category":"CONSTRUCTIVE"},{"word":"God","category":"GOD"},{"word":"strength","category":"CONSTRUCTIVE"},{"word":"rock","category":"CONSTRUCTIVE"},{"word":"hills","category":"CONSTRUCTIVE"},{"word":"understanding","category":"CONSTRUCTIVE"},{"word":"formed","category":"CONSTRUCTIVE"},{"word":"stubborn","category":"DESTRUCTIVE"},{"word":"opposing","category":"DESTRUCTIVE"},{"word":"torment","category":"DESTRUCTIVE"},{"word":"Verily","category":"GOD"},{"word":"cursed","category":"DESTRUCTIVE"},{"word":"plotted","category":"DESTRUCTIVE"},{"word":"plot","category":"DESTRUCTIVE"},{"word":"god","category":"GOD"},{"word":"create","category":"CONSTRUCTIVE"},{"word":"destroy","category":"DESTRUCTIVE"},{"word":"life","category":"CONSTRUCTIVE"},{"word":"death","category":"DESTRUCTIVE"},{"word":"frowned","category":"DESTRUCTIVE"}]}"""
-# fmt: on
-
-
-def check_semantics(sentence, matches):
-    """
-    matches: Liste von Dicts/Tuples, z.B.:
-             [{"index": 3, "word": "Gott", "category": "GOD"}, ...]
-    """
-    # Erstelle eine lesbare Liste der Zielwörter für den Prompt
-    targets_string = "\n".join(
-        [
-            f'- Index {m["index"]}: "{m["word"]}" (Kategorie: {m["category"]})'
-            for m in matches
-        ]
-    )
-
-    prompt = f"""You are a precise semantic validation engine.
-    TASK:
-    Analyze the sentence below and determine for each listed target word if it truly refers to its assigned category in this exact semantic context.
-
-    CRITERIA FOR CATEGORIES:
-    1. GOD (Deity & Divine Attributes)
-    - MUST refer ONLY to the Supreme Deity/Creator (e.g., Allah, Lord, the Merciful).
-    - DO NOT match if it refers to creation
-
-    2. DESTRUCTIVE (Sin, Disbelief, Punishment, and Cosmic Destruction)
-    - MUST match explicit acts of destruction, divine punishment, torment (e.g., Hell, punishment, doom).
-    - MUST match terms of ultimate spiritual failure, rebellion, or sin: This explicitly includes "disbelievers" (Kafir), "sinners/criminals" (Mujrim), hypocrites, arrogance against God, and major sins.
-    - MUST map the strict thematic connection between the Type of Sinner (e.g., Kafir, Mujrim, Munafiq, Taghut), their Specific Rebellion, and the corresponding Mirror Punishment. 
-    - MUST include specific eschatological names of Layers of Hell and Torment (e.g., Saqar, Hutamah, Laza, Sa'ir, Jahim, Hawiyah, Sijjin). You will recognize what is meant by the word from the context: Is it connected to punishment? A warning? A threat? Then it will match the category. 
-    - MUST include deadly, non-nourishing Destructive Flora, Foods, and Liquids designed to inflict physical agony (e.g., Zaqqum, Ghislin, Hamim, Ghassaq, Dhari').
-    - MUST include manifestations of Cosmic Destruction, Weather Catastrophes, and Divine Wrath Weapons used to obliterate rebellious civilizations (e.g., Hijarah min Sijzil, Sarsar, Sayhah, Al-Khasf, Al-Qari'ah). But only in context of punishment.
-    -RITERIA: If the word embodies spiritual ruin, hostility to truth, or physical destruction, it is DESTRUCTIVE.
-    - MUST encompass the full scale of divine confrontation, including explicit acts of threatening, wrath, warning, rebuking, humiliating, exclaiming/refuting, admonishing, and punishing.
-    - CRITERIA: If the word embodies spiritual ruin, hostility to truth, or physical destruction, it is DESTRUCTIVE.
-
-
-    3. CONSTRUCTIVE (Faith, Virtue, Divine Reward, and Cosmic Creation)
-    - MUST match explicit acts of creation, divine reward and ultimate bliss regarding rewards from God (e.g., Paradise/Jannah, eternal life, ultimate success/Falah).
-    - MUST match terms of ultimate spiritual success, obedience, or virtue: This explicitly includes "believers" (Mu'min), "the righteous/pious" (Abrar/Muttaqin), "the close ones" (Muqarrabun), humility before God, and major virtues and qualities praised by God.
-    - MUST map the strict thematic connection between the Type of Believer (e.g., Mu'min, Sabiq, Muhsin), their Specific Virtue/Sacrifice, and the corresponding Mirror Reward. 
-    - MUST include specific eschatological names of Layers of Paradise and Ultimate Peace (e.g., Firdaws, 'Adn, Na'im, Ma'wa, Darus-Salam, Illiyyin). You will recognize what is meant by the word from the context: Is it connected to reward? A glad tiding? A promise of peace? Then it will match the category. 
-    - MUST include heavenly, deeply nourishing Constructive Flora, Foods, and Liquids designed to inflict absolute bliss and eternal satisfaction (e.g., Tuba-Tree, Tasnim, Salsabil, Kauthar, pure milk, clarified honey, non-intoxicating wine).
-    - MUST include manifestations of Cosmic Creation, Life-giving Weather, and Divine Mercy Shields used to bless, revive, or protect righteous civilizations (e.g., Sakinah/Divine Tranquility, life-giving rain/Ghaith, expanding of the heavens, protective shade/Zil, Angels, Blessings). Always in the context of blessing and reward.
-    - MUST encompass the full scale of divine grace and welcoming connection, including explicit acts of bringing glad tidings (Bashara), love (Wudd/Mahabbah), praising/honoring, purifying (tazkiyah), guiding (hidayah), forgiving (ghufran), embracing/protecting (hifz), and rewarding.
-    - CRITERIA: If the word embodies spiritual success, divine alignment, moral virtue, life-giving creation, or ultimate peace, it is CONSTRUCTIVE.
-
-    SENTENCE:
-    \"\"\"{sentence}\"\"\"
-
-    TARGET WORDS TO VERIFY:
-    {targets_string}
-
-    OUTPUT RULE:
-    Your response must be a valid JSON object where the keys are the string representation of the indexes, and values are booleans (true/false).
-    Do NOT include any markdown formatting, backticks, or explanation.
-    
-    Example Output Format:
-    {{
-        "3": true,
-        "7": false
-    }}"""
-    print(f"{'#' * 55} \nMATCHES: \n\t{matches} \n{'#' * 55}")
-
-    output = LLM(prompt, temperature=0.0)
-    text = output["choices"][0]["text"].strip()
-
-    try:
-        # Konvertiert JSON-Keys ("3") zu Integern (3) für einfachere Handhabung
-        decisions = {int(k): v for k, v in json.loads(text).items()}
-    except Exception:
-        decisions = {m["index"]: False for m in matches}
-
-    # Konsolen-Validierung (bunter Satz)
-    GRUEN = "\033[32m"
-    RESET = "\033[0m"
-    worte = sentence.split()
-    for m in matches:
-        idx = m["index"]
-        if idx < len(worte) and decisions.get(idx, False):
-            worte[idx] = f"{GRUEN}{worte[idx]}{RESET}"
-    bunter_satz = " ".join(worte)
-
-    ausgabe = f"{'#' * 55}\nSENTENCE: \t {bunter_satz}\n{'#' * 55}\nDECISIONS: \t {decisions}\n\n\n"
-    print(ausgabe)
-
-    return decisions
-
-
-def split_into_sentences(text: str):
-    return [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
-
-
 def normalize(word: str) -> str:
     return re.sub(r"[^\w]", "", word).strip()
 
@@ -315,77 +206,138 @@ def normalize(word: str) -> str:
 # ==========================================
 # ANNOTATION ENGINE (DEINE ORIGINAL-STRUKTUR)
 # ==========================================
-def annotate_text(text: str) -> str:
+def get_annotated_text(file_name: str) -> str:
+    annotated_file = Path(
+        f"/home/muhammed-emin-eser/desk/din/quran/prompts_jsonl/{file_name}.jsonl"
+    )
+
+    with open(
+        "/home/muhammed-emin-eser/desk/din/ayah-aligner/result110.jsonl", "r"
+    ) as f:
+        lines = f.readlines()
+    verses = {}
+    for line in lines:
+        line = json.loads(line)
+        verses[int(line["custom_id"])] = json.loads(
+            line["response"]["body"]["choices"][0]["message"]["content"]
+        )
+    return verses
+
+
+def annotate_highlights(verse, highlights: Dict):
     # 1. Zitate direkt auf nativer String-Ebene in Kursiv wandeln
-    text = re.sub(r'["\'](.*?)["\']', r"{\\i1}\1{\\i0}", text)
+    matches = re.sub(r'["\'](.*?)["\']', r"{\\i1}\1{\\i0}", verse)
 
     # 2. "O ..."-Prinzip (Direkte Ansprachen am Satzanfang)
     def call_to_action_replacer(match):
-        o_part = match.group(1)
-        subject = match.group(2)
+        o_part = match.group(1)  # z. B. "O "
+        full_text_after_o = match.group(2)  # z. B. "you Messenger, deliver the message"
+        prompt = f"""Analyze the following text for a vocative address ("O-<subject>" / "Oh ...").
+    Identify the true grammatical subject/entity being called upon or addressed after the particle "O".
+
+    Examples for your understanding:
+    - Input: "O you who believe, eat of the good things" -> Output: "you who believe"
+    - Input: "O Prophet, fight the disbelievers" -> Output: "Prophet"
+    - Input: "O you Messenger, deliver what has been revealed" -> Output: "you Messenger"
+    - Input": "O People of the Scripture, why do you disbelieve" -> Output: "People of the Scripture"
+
+    Task: Extract ONLY the full entity being addressed.
+    Output format: Respond with EXACTLY that extracted phrase/word. No punctuation, no quotes, no explanations.
+
+    Text: {o_part}{full_text_after_o}
+    Addressed Entity:"""
+
+        output = LLM(prompt=prompt, max_tokens=1000)
+        text = output["choices"][0]["text"].strip()
+
+        # Wir schneiden das Subjekt aus dem Text aus, der NACH dem "O" kommt
+        rest_of_text = full_text_after_o.replace(text, "", 1)
+
         return (
-            rf"{{\b1\c&HFFFFFF&\fs55}}{o_part}{{\\b0\c&HFFFFFF&\fs45}}{subject.upper()}"
+            rf"{{\b1\c&HFFFFFF&\fs55}}{o_part}{text.upper()}"
+            rf"{{\b0\c&HFFFFFF&\fs45}}{rest_of_text}"
         )
 
-    text = re.sub(r"\b(O\s+)(.+)", call_to_action_replacer, text)
+    matches = re.sub(r"(\s*[oO]\s+)(.+)", call_to_action_replacer, verse)
 
     # 3. Ausrufezeichen-Nachdruck (Macht den Satz bis zum ! fett)
-    text = re.sub(r"CN_START([^.!?]*?!)", r"{\\b1}\1{\\b0}", text)
+    matches = re.sub(r"CN_START([^.!?]*?!)", r"{\\b1}\1{\\b0}", verse)
 
     # 4. Klammern dezent formatieren
-    text = re.sub(r"\((.*?)\)", r"{\\fs30\\c&HAAAAAA&}(\1){\\fs40\\c&HFFFFFF&}", text)
 
-    # 5. Sätze splitten für LLM-Verarbeitung
-    sentences = split_into_sentences(text)
-    output_sentences = []
+    detected_matches = []
 
-    for sentence in sentences:
-        # Build deterministic lookup: word -> category
-        words = sentence.split(" ")
-        processed = []
+    def format_nested_parentheses_with_pyparsing(verse):
+        # 1. CharsNotIn (großes C) definiert Text außerhalb der Klammern
+        text_outside = CharsNotIn("()")
 
-        # 1. Schritt: Alle Regex-Treffer im Satz sammeln
-        detected_matches = []
-        for i, w in enumerate(words):
-            clean = normalize(w)
-            clean_lower = clean.lower()
+        # 2. Findet alles zwischen ( und ), egal wie tief verschachtelt
+        parentheses_content = originalTextFor(nestedExpr("(", ")"))
 
-            for category, pattern in REFERENCE_THEMES.items():
-                if pattern.search(clean_lower):
-                    print(f"[REGEX] '{w.strip()}' -> Kategorie: {category}")
-                    if category in COLOR_MAP:
-                        detected_matches.append(
-                            {
-                                "index": i,
-                                "word": w,
-                                "category": category,
-                                "color": COLOR_MAP[category],
-                            }
-                        )
-                        break
+        # 3. Der gesamte Parser sucht entweder nach Text ODER nach einer Klammer
+        parser = (text_outside | parentheses_content)[...]
 
-        # 2. Schritt: Einmalige LLM-Validierung für den ganzen Satz
-        llm_decisions = {}
-        if detected_matches:
-            llm_decisions = check_semantics(sentence, detected_matches)
+        # 4. Den Vers parsen (gibt eine Liste von Textbausteinen zurück)
+        parsed_tokens = parser.parseString(verse).asList()
 
-        # 3. Schritt: Satz mit den validierten Treffern final verarbeiten
-        for i, w in enumerate(words):
-            match_info = next((m for m in detected_matches if m["index"] == i), None)
+        # 5. Die Bausteine wieder zusammensetzen und die Klammern dabei formatieren
+        result = []
+        for token in parsed_tokens:
+            if token.startswith("(") and token.endswith(")"):
+                # Es ist ein Klammerblock -> ASS-Formatierung anwenden
+                # token[1:-1] schneidet die äußeren Klammern ab
+                inner_content = token[1:-1]
+                result.append(
+                    rf"{{\fs30\c&HAAAAAA&}}({inner_content}){{\fs40\c&HFFFFFF&}}"
+                )
+            else:
+                # Es ist normaler Text außerhalb der Klammern
+                result.append(token)
 
-            if match_info and llm_decisions.get(i, False):
-                if match_info["category"] == "GOD":
-                    w = f"{{\\c{match_info['color']}}}{{\\b1}}{w}{{\\b0}}{{\\c}}"
-                else:
-                    w = f"{{\\c{match_info['color']}}}{w}{{\\c}}"
+        return "".join(result)
 
-            processed.append(w)
-        output_sentences.append(" ".join(processed))
+    matches = format_nested_parentheses_with_pyparsing(verse)
 
-    return " ".join(output_sentences)
+    verse_tokens = matches.split()
+    for i, w in highlights.items():
+        cat = normalize(w).strip()
+        if cat in COLOR_MAP:
+            detected_matches.append(
+                {
+                    "index": i
+                    + 1,  # verse_tokens starts with verse id => have to shift pure verse text
+                    "word": verse_tokens[i + 1],  # ..
+                    "category": cat,
+                    "color": COLOR_MAP[cat],
+                }
+            )
+        else:
+            cat = "NONE"
+            detected_matches.append(
+                {
+                    "index": i + 1,
+                    "word": verse_tokens[i + 1],
+                    "category": cat,
+                    "color": COLOR_MAP[cat],
+                }
+            )
+    ass_lines = []
+    highlighted_ids = [el["index"] for el in detected_matches]
+    for i, token in enumerate(verse_tokens):
+        if i in highlighted_ids:
+            w = next((match for match in detected_matches if match["index"] == i), None)
+            if w["category"] == "GOD":
+                w = f"{{\\c{w['color']}}}{{\\b1}}{w['word']}{{\\b0}}{{\\c}}"
+            else:
+                w = f"{{\\c{w['color']}}}{w['word']}{{\\c}}"
+        else:
+            w = token
+        ass_lines.append(w)
+    return " ".join(ass_lines)
 
 
 def build_ass(
+    file_name,
     entries,
     width,
     height,
@@ -406,6 +358,7 @@ def build_ass(
     )
 
     only_header = len(entries_sorted) == 1
+    semantic_indexes: Dict = get_annotated_text(file_name)  # verse_id: content
 
     for i, e in enumerate(entries_sorted):
         start = e.start
@@ -416,8 +369,13 @@ def build_ass(
             end = start + 0.25
 
         # LLM-basierte Annotation & Formatierungen anwenden
-        styled_text = annotate_text(e.text)
-        txt = wrap_ass_text(styled_text, width, font_size)
+        semantic_content: Dict = (
+            semantic_indexes[i] if semantic_indexes.get(i, False) else {}
+        )
+        semantic_content = {int(k): v for k, v in semantic_content.items()}
+
+        highlighted = annotate_highlights(e.text, semantic_content)
+        txt = wrap_ass_text(highlighted if highlighted else e.text, width, font_size)
         txt = karaoke_reveal_words(txt)
 
         x, y = (
@@ -462,14 +420,21 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Generate ASS subtitles from mapping + overlay video."
     )
-    parser.add_argument("mapping", type=Path)
-    parser.add_argument("video", type=Path)
+    parser.add_argument(
+        "mapping",
+        type=Path,
+    )
+    parser.add_argument(
+        "video",
+        type=Path,
+    )
     parser.add_argument("output", type=Path)
     return parser.parse_args(argv)
 
 
 def main(argv: Optional[List[str]] = None):
     args = parse_args(argv)
+    file_name = args.output.stem
     width, height, duration = ffprobe_get(args.video)
 
     entries = []
@@ -482,7 +447,7 @@ def main(argv: Optional[List[str]] = None):
     if not entries:
         raise RuntimeError("Keine gültigen Zeilen gefunden.")
 
-    ass_text = build_ass(entries, width, height, duration)
+    ass_text = build_ass(file_name, entries, width, height, duration)
     args.output.write_text(ass_text, encoding="utf-8")
     print(args.output)
 

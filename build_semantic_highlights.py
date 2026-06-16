@@ -77,7 +77,7 @@ def process_directory(directory_path: str):
     for file_path in alle_dateien:
         print(f"Verarbeite in REIHENFOLGE: {file_path}")
         txt_name = os.path.splitext(os.path.basename(file_path))[0]
-        if txt_name not in existing_json_names:
+        if True:
             file_structure = []
             path_obj = Path(file_path)
 
@@ -90,26 +90,14 @@ def process_directory(directory_path: str):
                 if verse_text:
                     verse_structure = {"verse_number": verse_idx, "sentences": []}
 
-                    matches = [extract_meaningful_tokens(verse_text)]
-
                     # LLM semantische Prüfung aufrufen (gibt Dict zurück: {index: "KATEGORIE"})
-                    decisions = check_semantics(verse_text, matches)
+                    decisions = check_semantics(verse_text, txt_name, verse_idx)
+                    continue
 
                     # Gefundene Kategorien in die Matches-Struktur integrieren
-                    for m in matches[0]:
-                        idx = m["index"]
-
-                        if idx in decisions:
-                            m["category"] = decisions[idx]
-                    verse_structure["sentences"].append(
-                        {"sentence_context": verse_text, "tokens": matches}
-                    )
-
                 file_structure.append(verse_structure)
         else:
             continue
-
-        yield file_path, file_structure
 
 
 def extract_meaningful_tokens(sentence: str) -> list:
@@ -140,7 +128,7 @@ def extract_meaningful_tokens(sentence: str) -> list:
 # --- Semantische Analyse ---
 
 
-def run_llama(verse, targets_string):
+def run_llama(verse, file_name, verse_idx):
 
     prompt = f"""
     You are a precise semantic validation engine.
@@ -190,7 +178,7 @@ def run_llama(verse, targets_string):
 
 
     OUTPUT RULE:
-    Your response must be a valid JSON object where the keys are the string representation of the indexes, and values are the assigned category strings.
+    Your response must be a valid JSON object where the keys are the string representation of the word indexes, and values are the assigned category strings.
     Do NOT include any markdown formatting, backticks, or explanation.
     
     Example Output Format:
@@ -201,61 +189,116 @@ def run_llama(verse, targets_string):
     """
 
     try:
-        client = OpenAI(
-            api_key="sk-ws-H.IEDDEX.RqQn.MEYCIQDXufYP1QkVhsy8CYvgtWKM6itnCPzplRhHpsXmo1DAxAIhAN0P_Na2bxg43pfEekm7S58u0IeeJfU5jmAxXLT4beRv",
-            base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
-        )
-
-        response = client.chat.completions.create(
-            model="qwen3.7-max",
-            temperature=0.0,
-            messages=[
-                {
-                    "role": "system",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": f"{prompt}",
-                            "cache_control": {"type": "ephemeral"},
-                        }
-                    ],
-                },
-                {
-                    "role": "user",
-                    "content": f"""
-                VERSE:
-                "{verse}"
-
-                TARGET WORDS TO VERIFY:
-                {targets_string}
-            """,
-                },
-            ],
-        )
-        ki_text_output = response.choices[0].message.content
-        print(
-            f"Cache created: {response.usage.prompt_tokens_details.cache_creation_input_tokens}"
-        )
-        print(f"Cache hit: {response.usage.prompt_tokens_details.cached_tokens}")
-        print(ki_text_output)
+        # client = OpenAI(
+        #     api_key="sk-ws-H.IEDDEX.RqQn.MEYCIQDXufYP1QkVhsy8CYvgtWKM6itnCPzplRhHpsXmo1DAxAIhAN0P_Na2bxg43pfEekm7S58u0IeeJfU5jmAxXLT4beRv",
+        #     base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+        # )
+        #
+        #        {
+        #            "custom_id": "req-1",
+        #            "method": "POST",
+        #            "url": "/v1/chat/completions",
+        #            "body": {
+        #                "model": "qwen-plus",
+        #                "messages": [
+        #                    {
+        #                        "role": "user",
+        #                        "content": "Summarize quantum computing in two sentences.",
+        #                    }
+        #                ],
+        #            },
+        #        }
+        #
+        #        {
+        #            "custom_id": "req-2",
+        #            "method": "POST",
+        #            "url": "/v1/chat/completions",
+        #            "body": {
+        #                "model": "qwen-plus",
+        #                "messages": [{"role": "user", "content": "What is 2+2?"}],
+        #            },
+        #        }
+        #
+        request = {
+            "custom_id": f"{verse_idx}",
+            "method": "POST",
+            "url": "/v1/chat/completions",
+            "body": {
+                "model": "qwen-max",
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": prompt,
+                                "cache_control": {"type": "ephemeral"},
+                            }
+                        ],
+                    },
+                    {
+                        "role": "user",
+                        "content": f"VERSE:\n'{[word for word in verse.split()]}'\n\n",
+                    },
+                ],
+            },
+        }
+        with open(
+            f"/home/muhammed-emin-eser/desk/din/quran/prompts_jsonl/{file_name}.jsonl",
+            "a",
+            encoding="utf-8",
+        ) as f:
+            # json.dumps konvertiert das Dictionary in einen einzeiligen String
+            f.write(json.dumps(request, ensure_ascii=False) + "\n")
+    #     response = client.chat.completions.create(
+    #         model="qwen3.7-max",
+    #         temperature=0.0,
+    #         messages=[
+    #             {
+    #                 "role": "system",
+    #                 "content": [
+    #                     {
+    #                         "type": "text",
+    #                         "text": f"{prompt}",
+    #                         "cache_control": {"type": "ephemeral"},
+    #                     }
+    #                 ],
+    #             },
+    #             {
+    #                 "role": "user",
+    #                 "content": f"""
+    #             VERSE:
+    #             "{verse}"
+    #
+    #             TARGET WORDS TO VERIFY:
+    #             {targets_string}
+    #         """,
+    #             },
+    #         ],
+    #     )
+    #     ki_text_output = response.choices[0].message.content
+    #     print(
+    #         f"Cache created: {response.usage.prompt_tokens_details.cache_creation_input_tokens}"
+    #     )
+    #     print(f"Cache hit: {response.usage.prompt_tokens_details.cached_tokens}")
+    #     print(ki_text_output)
     except Exception as e:
         print(f"Error message: {e}")
         RuntimeError("Non ok Status Code")
+    #
+    # return ki_text_output
 
-    return ki_text_output
 
-
-def check_semantics(verse, tokens):
+def check_semantics(verse, file_name, verse_idx):
     """
     matches: Liste von Dicts/Tuples, z.B.:
              [{"index": 3, "word": "Gott"}, ...]
     """
-    targets_string = "\n".join(
-        [f'- Index {m["index"]}: "{m["word"]}" )' for v in tokens for m in v]
-    )
+    tokens = [word for word in verse.split()]
 
     print(f"{'#' * 55} \nTOKENS: \n\t{tokens} \n{'#' * 55}")
-    decisions = run_llama(verse, targets_string)
+    decisions = run_llama(verse, file_name, verse_idx)
+    return None
     try:
         decisions = {int(k): v for k, v in json.loads(decisions).items()}
 

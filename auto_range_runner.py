@@ -5,7 +5,7 @@ import asyncio
 from mapping import BASE_DIR
 from pathlib import Path
 
-start_id, end_id = 74, 75
+start_id, end_id = 98, 99
 cwd = os.getcwd()
 
 
@@ -78,11 +78,11 @@ async def process_pipeline(i):
     ).stdout.strip()
 
     # 1. Mapping prüfen
-    # p_mapping = await run_mapping(translation_file, audio, cropped_video, i)
-    # if p_mapping.returncode != 0:
-    #     raise RuntimeError(
-    #         f"Pipeline {i}: mapping.py fehlgeschlagen mit Exit-Code {p_mapping.returncode}"
-    #     )
+    p_mapping = await run_mapping(translation_file, audio, cropped_video, i)
+    if p_mapping.returncode != 0:
+        raise RuntimeError(
+            f"Pipeline {i}: mapping.py fehlgeschlagen mit Exit-Code {p_mapping.returncode}"
+        )
 
     mapping_file = subprocess.run(
         f"find {BASE_DIR}/output/mapping/ -type f -name '{i}_*'",
@@ -97,8 +97,8 @@ async def process_pipeline(i):
         text=True,
     ).stdout.strip()
 
-    ass_output = Path(translation_file).name
-    ass_path = f"{BASE_DIR}/output/ass/{ass_output.replace('.txt', '.ass')}"
+    # ass_output = Path(translation_file).name
+    # ass_path = f"{BASE_DIR}/output/ass/{ass_output.replace('.txt', '.ass')}"
 
     # 2. ASS-Generierung prüfen
     # p_ass = await run_ass(
@@ -112,16 +112,16 @@ async def process_pipeline(i):
     #     )
 
     # 3. Burn Subs prüfen
-    p_burn = await run_burn_subs(
-        video_file=overlay_video,
-        ass_file=ass_path,
-        audio_dir=audio_dir,
-        out_dir=f"{BASE_DIR}/output/final/",
-    )
-    if p_burn.returncode != 0:
-        raise RuntimeError(
-            f"Pipeline {i}: burn_subtitles.py fehlgeschlagen mit Exit-Code {p_burn.returncode}"
-        )
+    # p_burn = await run_burn_subs(
+    #     video_file=overlay_video,
+    #     ass_file=ass_path,
+    #     audio_dir=audio_dir,
+    #     out_dir=f"{BASE_DIR}/output/final/",
+    # )
+    # if p_burn.returncode != 0:
+    #     raise RuntimeError(
+    #         f"Pipeline {i}: burn_subtitles.py fehlgeschlagen mit Exit-Code {p_burn.returncode}"
+    #     )
 
 
 async def main():

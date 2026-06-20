@@ -19,6 +19,7 @@ from typing import List, Optional, Tuple
 # Zeitformatierung
 # ---------------------------------------------------------------------------
 
+
 def seconds_to_timestamp(seconds: float) -> str:
     """Wandelt Sekunden in das Zeitstempel-Format MM:SS um."""
     minutes = int(seconds // 60)
@@ -29,6 +30,7 @@ def seconds_to_timestamp(seconds: float) -> str:
 # ---------------------------------------------------------------------------
 # Textformatierung
 # ---------------------------------------------------------------------------
+
 
 def format_title_block(title_lines: List[str]) -> str:
     """
@@ -54,6 +56,7 @@ def format_title_block(title_lines: List[str]) -> str:
 # ---------------------------------------------------------------------------
 # Textdatei-Parser
 # ---------------------------------------------------------------------------
+
 
 def parse_text_file(path: Path) -> Tuple[List[str], List[str]]:
     """
@@ -95,12 +98,15 @@ def parse_text_file(path: Path) -> Tuple[List[str], List[str]]:
 # Mapping-Zeilen bauen
 # ---------------------------------------------------------------------------
 
+
 def build_title_line(title_lines: List[str]) -> str:
     """Erstellt die Titelzeile im Mapping-Format: '[00:00] :: Titel'."""
     return f"[00:00] :: {format_title_block(title_lines)}"
 
 
-def build_verse_line(timestamp: str, verse_entries: List[Tuple[int, str]]) -> str:
+def build_verse_line(
+    timestamp: str, verse_entries: List[Tuple[int, str]], stretch_first: bool = False
+) -> str:
     """
     Erstellt eine Vers-Zeile im Mapping-Format.
 
@@ -116,6 +122,15 @@ def build_verse_line(timestamp: str, verse_entries: List[Tuple[int, str]]) -> st
     >>> build_verse_line("00:42", [(3, "Text A"), (4, "Text B")])
     '[00:42] :: 3: Text A 4: Text B'
     """
+    if stretch_first:
+        first_line = f"[00:10] :: 1: {verse_entries[0][1]}"
+        remaining_content = " ".join(
+            f"{num}: {text}" for num, text in verse_entries[1:]
+        )
+        complete_line = f"""{first_line}\n
+            [{timestamp}] :: {remaining_content}"""
+        return complete_line
+
     content = " ".join(f"{num}: {text}" for num, text in verse_entries)
     return f"[{timestamp}] :: {content}"
 
@@ -123,6 +138,7 @@ def build_verse_line(timestamp: str, verse_entries: List[Tuple[int, str]]) -> st
 # ---------------------------------------------------------------------------
 # Mapping schreiben und lesen
 # ---------------------------------------------------------------------------
+
 
 def write_mapping(lines: List[str], dest: Path) -> Path:
     """

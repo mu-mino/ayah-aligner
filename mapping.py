@@ -190,7 +190,8 @@ def run(
         elif idx == 0 and group.circle_count > 1:
             # Fall 3/4: alle Verse bei T0 (gleiches Bild → gleicher Timestamp)
             t0 = seconds_to_timestamp(group.circle_window.start_sec)
-            line = build_verse_line(t0, group.verses)
+            stretch_first = True
+            line = build_verse_line(t0, group.verses, stretch_first)
             group.mapping_ts = t0
             group.mapping_line = line
             mapping_lines.append(line)

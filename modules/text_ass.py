@@ -242,20 +242,26 @@ def annotate_highlights(verse, highlights: Dict):
     - Input": "O People of the Scripture, why do you disbelieve" -> Output: "People of the Scripture"
 
     Task: Extract ONLY the full entity being addressed.
+    YOUR RESPONSE SHOULD BE ONLY THE ENTITY BEING ADDRESSED: ONLY ONLY ONLY: NOT ONE MORE WORD.
+    Your output should ONLY contain the name of the entity. DO NOT RETURN ANYTHING ELSE THAN THAT.
     Output format: Respond with EXACTLY that extracted phrase/word. No punctuation, no quotes, no explanations.
 
     Text: {o_part}{full_text_after_o}
     Addressed Entity:"""
 
-        output = LLM(prompt=prompt, max_tokens=1000)
+        output = LLM(prompt=prompt, max_tokens=10, temperature=0.0, stop="\n\n")
         text = output["choices"][0]["text"].strip()
 
         # Wir schneiden das Subjekt aus dem Text aus, der NACH dem "O" kommt
         rest_of_text = full_text_after_o.replace(text, "", 1)
 
         return (
-            rf"{{\b1\c&HFFFFFF&\fs55}}{o_part}{text.upper()}"
-            rf"{{\b0\c&HFFFFFF&\fs45}}{rest_of_text}"
+            (
+                rf"{{\b1\c&HFFFFFF&\fs55}}{o_part}{text.upper()}"
+                rf"{{\b0\c&HFFFFFF&\fs45}}{rest_of_text}"
+            )
+            if text.lower() in full_text_after_o.lower()
+            else (f"{o_part}{full_text_after_o}")
         )
 
     matches = re.sub(r"(\s*[oO]\s+)(.+)", call_to_action_replacer, verse)

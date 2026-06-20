@@ -5,7 +5,7 @@ import asyncio
 from mapping import BASE_DIR
 from pathlib import Path
 
-start_id, end_id = 110, 111
+start_id, end_id = 74, 75
 cwd = os.getcwd()
 
 
@@ -29,7 +29,7 @@ async def run_mapping(text_file, audio, video, surah_id):
 async def run_ass(mapping, video, output):
     process = await asyncio.create_subprocess_exec(
         f"{cwd}/.venv/bin/python3",
-        "modules/text_ass.py",
+        "modules/text_ass.ju.py",
         mapping,
         video,
         output,
@@ -101,15 +101,15 @@ async def process_pipeline(i):
     ass_path = f"{BASE_DIR}/output/ass/{ass_output.replace('.txt', '.ass')}"
 
     # 2. ASS-Generierung prüfen
-    p_ass = await run_ass(
-        mapping=mapping_file,
-        video=overlay_video,
-        output=ass_path,
-    )
-    if p_ass.returncode != 0:
-        raise RuntimeError(
-            f"Pipeline {i}: text_ass.py fehlgeschlagen mit Exit-Code {p_ass.returncode}"
-        )
+    # p_ass = await run_ass(
+    #     mapping=mapping_file,
+    #     video=overlay_video,
+    #     output=ass_path,
+    # )
+    # if p_ass.returncode != 0:
+    #     raise RuntimeError(
+    #         f"Pipeline {i}: text_ass.py fehlgeschlagen mit Exit-Code {p_ass.returncode}"
+    #     )
 
     # 3. Burn Subs prüfen
     p_burn = await run_burn_subs(

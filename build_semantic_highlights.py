@@ -24,27 +24,24 @@ def parse_text_file(path: Path) -> Tuple[List[str], List[str]]:
     angehängt.
     """
     title_lines: List[str] = []
-    numbered_lines: List[str] = []
+    numbered_lines: List[list] = []
     numbered = re.compile(r"^(\d+)[\.)]\s*(.*)")
     expected_next: Optional[int] = None
 
-    with path.open(encoding="utf-8") as f:
+    with Path(
+        f"/home/muhammed-emin-eser/desk/din/ayah-aligner/output/mapping/{path.name.replace('txt', 'mapping')}"
+    ).open(encoding="utf-8") as f:
+        verse_number = 0
         for line in f:
-            stripped = line.strip()
+            stripped = line.replace("\\n", " ").replace("\\", " ").strip()
             if not stripped:
                 continue
-            m = numbered.match(stripped)
-            if m:
-                idx = int(m.group(1))
-                text = m.group(2).strip()
-                if expected_next is None or idx == expected_next:
-                    expected_next = idx + 1
-                    numbered_lines.append(text if text else stripped)
-                    continue
-            if numbered_lines:
-                numbered_lines[-1] = f"{numbered_lines[-1]} {stripped}"
+            if re.match(r"^\[\d+:\d+\] :: ", line):
+                stripped = re.sub(r"^\[\d+:\d+\] :: ", "", stripped)
+                numbered_lines.append([verse_number, stripped])
+                verse_number += 1
             else:
-                title_lines.append(stripped)
+                numbered_lines[-1][1] = numbered_lines[-1][1] + stripped
 
     return title_lines, numbered_lines
 
@@ -86,7 +83,9 @@ def process_directory(directory_path: str):
 
             # Verarbeite die extrahierten, nummerierten Verse
             # Da numbered_lines sequenziell ab Vers 1 befüllt wird, nutzen wir enumerate(..., start=1)
-            for verse_idx, verse_text in enumerate(numbered_lines, start=1):
+            for verse_idx, verse_text in enumerate(numbered_lines, start=0):
+                if verse_idx == 0:
+                    continue
                 if verse_text:
                     verse_structure = {"verse_number": verse_idx, "sentences": []}
 
@@ -98,6 +97,8 @@ def process_directory(directory_path: str):
                 file_structure.append(verse_structure)
         else:
             continue
+
+        yield file_path, file_structure
 
 
 def extract_meaningful_tokens(sentence: str) -> list:
@@ -238,7 +239,7 @@ def run_llama(verse, file_name, verse_idx):
                     },
                     {
                         "role": "user",
-                        "content": f"VERSE:\n'{[word for word in verse.split()]}'\n\n",
+                        "content": f"VERSE:\n'{verse[1]}'\n\n",
                     },
                 ],
             },
@@ -294,9 +295,7 @@ def check_semantics(verse, file_name, verse_idx):
     matches: Liste von Dicts/Tuples, z.B.:
              [{"index": 3, "word": "Gott"}, ...]
     """
-    tokens = [word for word in verse.split()]
 
-    print(f"{'#' * 55} \nTOKENS: \n\t{tokens} \n{'#' * 55}")
     decisions = run_llama(verse, file_name, verse_idx)
     return None
     try:

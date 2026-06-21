@@ -17,6 +17,7 @@ import argparse
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional, Tuple
+import dill
 
 import cv2
 
@@ -44,6 +45,31 @@ BASE_DIR = Path(__file__).parent
 # ---------------------------------------------------------------------------
 # Interne Datenstruktur
 # ---------------------------------------------------------------------------
+
+
+import dill
+
+
+def write_vars(global_vars, local_vars=None):
+    # Kombiniere Globals und Locals in ein Dictionary
+    all_vars = {}
+    all_vars.update(global_vars)
+    if local_vars:
+        all_vars.update(local_vars)
+
+    # Filtere Systemvariablen, Module und die Funktion selbst heraus,
+    # da dill sonst versucht, die offene Datei oder sich selbst zu speichern.
+    filtered_vars = {
+        k: v
+        for k, v in all_vars.items()
+        if not k.startswith("__")
+        and not hasattr(v, "__package__")
+        and k != "f"
+        and k != "write_vars"
+    }
+
+    with open("for_loop_grey.pkl", "wb") as f:
+        dill.dump(filtered_vars, f)
 
 
 @dataclass
@@ -123,6 +149,7 @@ def run(
     groups: List[WindowGroup] = []
     current_group: Optional[WindowGroup] = None
     first_window_has_circle: bool = False
+    empty_starting_windows = []
 
     if ENABLE_TMP_WINDOW_FRAMES:
         frames_dir = Path(__file__).parent / "tests" / "frames"
@@ -143,12 +170,11 @@ def run(
         n = detect_markers_from_gray(gray)
         if i == 0 and n > 0:
             first_window_has_circle = True
-        if n > 0:
+        if n > 0 or i == 0 and n == 0:
             current_group = WindowGroup(circle_window=window, circle_count=n)
             groups.append(current_group)
         elif current_group is not None:
             current_group.sub_windows.append(window)
-
     # ------------------------------------------------------------------
     # 3. Circlelog aufbauen
     #    n Kreise → n Verse auf einmal in einem Eintrag
@@ -190,8 +216,7 @@ def run(
         elif idx == 0 and group.circle_count > 1:
             # Fall 3/4: alle Verse bei T0 (gleiches Bild → gleicher Timestamp)
             t0 = seconds_to_timestamp(group.circle_window.start_sec)
-            stretch_first = True
-            line = build_verse_line(t0, group.verses, stretch_first)
+            line = build_verse_line(t0, group.verses)
             group.mapping_ts = t0
             group.mapping_line = line
             mapping_lines.append(line)

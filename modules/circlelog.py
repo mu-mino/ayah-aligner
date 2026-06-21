@@ -104,9 +104,7 @@ def build_title_line(title_lines: List[str]) -> str:
     return f"[00:00] :: {format_title_block(title_lines)}"
 
 
-def build_verse_line(
-    timestamp: str, verse_entries: List[Tuple[int, str]], stretch_first: bool = False
-) -> str:
+def build_verse_line(timestamp: str, verse_entries: List[Tuple[int, str]]) -> str:
     """
     Erstellt eine Vers-Zeile im Mapping-Format.
 
@@ -122,15 +120,6 @@ def build_verse_line(
     >>> build_verse_line("00:42", [(3, "Text A"), (4, "Text B")])
     '[00:42] :: 3: Text A 4: Text B'
     """
-    if stretch_first:
-        first_line = f"[00:10] :: 1: {verse_entries[0][1]}"
-        remaining_content = " ".join(
-            f"{num}: {text}" for num, text in verse_entries[1:]
-        )
-        complete_line = f"""{first_line}\n
-            [{timestamp}] :: {remaining_content}"""
-        return complete_line
-
     content = " ".join(f"{num}: {text}" for num, text in verse_entries)
     return f"[{timestamp}] :: {content}"
 

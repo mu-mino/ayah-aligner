@@ -242,6 +242,7 @@ def run(
     if not groups_with_subs:
         return
 
+    write_vars(globals(), locals())
     whisper_model = load_model(device=whisper_device)
 
     for group in groups_with_subs:
@@ -258,7 +259,6 @@ def run(
             windows=group.sub_windows,
             model=whisper_model,
         )
-        write_vars(globals(), locals())
         session = run_matching(
             chunks=chunks,
             verse_text=verse_text,

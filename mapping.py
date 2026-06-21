@@ -199,7 +199,7 @@ def run(
 
     verse_number = 1
     for idx, group in enumerate(groups):
-        n = group.circle_count
+        n = max(1, group.circle_count)
         taken = min(n, len(numbered_lines))
         for i in range(taken):
             group.verses.append((verse_number + i, numbered_lines[i]))
@@ -224,7 +224,7 @@ def run(
         else:
             # Fall 2 + normaler Shift-Flow
             ts = (
-                "00:10"
+                seconds_to_timestamp(groups[idx].circle_window.end_sec)
                 if idx == 0
                 else seconds_to_timestamp(groups[idx].circle_window.start_sec)
             )
@@ -253,13 +253,12 @@ def run(
         ayah = extract_verse_number(next_group.mapping_line)
         if not verse_text or not ayah:
             continue
-
         chunks = transcribe_chunks(
             video_path=audio_path,
             windows=group.sub_windows,
             model=whisper_model,
         )
-
+        write_vars(globals(), locals())
         session = run_matching(
             chunks=chunks,
             verse_text=verse_text,

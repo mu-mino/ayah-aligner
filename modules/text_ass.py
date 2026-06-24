@@ -212,7 +212,7 @@ def get_annotated_text(file_name: str) -> str:
     )
 
     with open(
-        "/home/muhammed-emin-eser/desk/din/ayah-aligner/result110.jsonl", "r"
+        "/home/muhammed-emin-eser/desk/din/output_llm_tmp/result98.jsonl", "r"
     ) as f:
         lines = f.readlines()
     verses = {}
@@ -312,7 +312,7 @@ def annotate_highlights(verse, highlights: Dict):
                 {
                     "index": i
                     + 1,  # verse_tokens starts with verse id => have to shift pure verse text
-                    "word": verse_tokens[i + 1],  # ..
+                    "word": verse_tokens[i + 1] if (i + 1) < len(verse_tokens) else "",
                     "category": cat,
                     "color": COLOR_MAP[cat],
                 }
@@ -322,7 +322,7 @@ def annotate_highlights(verse, highlights: Dict):
             detected_matches.append(
                 {
                     "index": i + 1,
-                    "word": verse_tokens[i + 1],
+                    "word": verse_tokens[i + 1] if (i + 1) < len(verse_tokens) else "",
                     "category": cat,
                     "color": COLOR_MAP[cat],
                 }

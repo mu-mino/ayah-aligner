@@ -29,7 +29,7 @@ async def run_mapping(text_file, audio, video, surah_id):
 async def run_ass(mapping, video, output):
     process = await asyncio.create_subprocess_exec(
         f"{cwd}/.venv/bin/python3",
-        "modules/text_ass.ju.py",
+        "modules/text_ass.py",
         mapping,
         video,
         output,
@@ -97,31 +97,29 @@ async def process_pipeline(i):
         text=True,
     ).stdout.strip()
 
-    # ass_output = Path(translation_file).name
-    # ass_path = f"{BASE_DIR}/output/ass/{ass_output.replace('.txt', '.ass')}"
+    ass_output = Path(translation_file).name
+    ass_path = f"{BASE_DIR}/output/ass/{ass_output.replace('.txt', '.ass')}"
 
     # 2. ASS-Generierung prüfen
-    # p_ass = await run_ass(
-    #     mapping=mapping_file,
-    #     video=overlay_video,
-    #     output=ass_path,
-    # )
-    # if p_ass.returncode != 0:
-    #     raise RuntimeError(
-    #         f"Pipeline {i}: text_ass.py fehlgeschlagen mit Exit-Code {p_ass.returncode}"
-    #     )
+    p_ass = await run_ass(
+        mapping=mapping_file,
+        video=overlay_video,
+        output=ass_path,
+    )
+    if p_ass.returncode != 0:
+        pass
 
     # 3. Burn Subs prüfen
-    # p_burn = await run_burn_subs(
-    #     video_file=overlay_video,
-    #     ass_file=ass_path,
-    #     audio_dir=audio_dir,
-    #     out_dir=f"{BASE_DIR}/output/final/",
-    # )
-    # if p_burn.returncode != 0:
-    #     raise RuntimeError(
-    #         f"Pipeline {i}: burn_subtitles.py fehlgeschlagen mit Exit-Code {p_burn.returncode}"
-    #     )
+    p_burn = await run_burn_subs(
+        video_file=overlay_video,
+        ass_file=ass_path,
+        audio_dir=audio_dir,
+        out_dir=f"{BASE_DIR}/output/final/",
+    )
+    if p_burn.returncode != 0:
+        raise RuntimeError(
+            f"Pipeline {i}: burn_subtitles.py fehlgeschlagen mit Exit-Code {p_burn.returncode}"
+        )
 
 
 async def main():

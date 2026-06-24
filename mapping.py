@@ -21,7 +21,7 @@ import dill
 
 import cv2
 
-ENABLE_TMP_WINDOW_FRAMES: bool = True
+ENABLE_TMP_WINDOW_FRAMES: bool = False
 
 from modules.videowindow import extract_windows, FrameWindow, run_ffprobe
 from modules.recognizecircle import detect_markers_from_gray
@@ -99,8 +99,6 @@ class WindowGroup:
 
 def _load_gray(video_path: Path, window: FrameWindow):
     """Lädt den mittleren Frame eines FrameWindow als Graustufenbild."""
-    if window.end_sec - window.start_sec < 1:
-        return None
     info = run_ffprobe(video_path)
     mid_sec = (window.start_sec + window.end_sec) / 2.0
     frame_idx = int(mid_sec * info.fps)
@@ -149,7 +147,6 @@ def run(
     groups: List[WindowGroup] = []
     current_group: Optional[WindowGroup] = None
     first_window_has_circle: bool = False
-    empty_starting_windows = []
 
     if ENABLE_TMP_WINDOW_FRAMES:
         frames_dir = Path(__file__).parent / "tests" / "frames"
@@ -170,11 +167,12 @@ def run(
         n = detect_markers_from_gray(gray)
         if i == 0 and n > 0:
             first_window_has_circle = True
-        if n > 0 or i == 0 and n == 0:
+        if n > 0:
             current_group = WindowGroup(circle_window=window, circle_count=n)
             groups.append(current_group)
         elif current_group is not None:
             current_group.sub_windows.append(window)
+
     # ------------------------------------------------------------------
     # 3. Circlelog aufbauen
     #    n Kreise → n Verse auf einmal in einem Eintrag
@@ -195,11 +193,11 @@ def run(
 
     # Nach einem Fall-3/4-Split haben alle Folge-Gruppen keinen Shift-Vorgänger mehr —
     # sie bekommen ihren eigenen circle_window-Timestamp (wie Fall 1).
-    unshifted_mode: bool = False
+    unshifted_mode: bool = first_window_has_circle
 
     verse_number = 1
     for idx, group in enumerate(groups):
-        n = max(1, group.circle_count)
+        n = group.circle_count
         taken = min(n, len(numbered_lines))
         for i in range(taken):
             group.verses.append((verse_number + i, numbered_lines[i]))
@@ -220,13 +218,13 @@ def run(
             group.mapping_ts = t0
             group.mapping_line = line
             mapping_lines.append(line)
-            unshifted_mode = first_window_has_circle
+            unshifted_mode = True
         else:
             # Fall 2 + normaler Shift-Flow
             ts = (
                 seconds_to_timestamp(groups[idx].circle_window.end_sec)
                 if idx == 0
-                else seconds_to_timestamp(groups[idx].circle_window.start_sec)
+                else seconds_to_timestamp(groups[idx - 1].circle_window.start_sec)
             )
             group.mapping_ts = ts
             line = build_verse_line(ts, group.verses)
@@ -242,7 +240,6 @@ def run(
     if not groups_with_subs:
         return
 
-    write_vars(globals(), locals())
     whisper_model = load_model(device=whisper_device)
 
     for group in groups_with_subs:
@@ -254,11 +251,13 @@ def run(
         ayah = extract_verse_number(next_group.mapping_line)
         if not verse_text or not ayah:
             continue
+
         chunks = transcribe_chunks(
             video_path=audio_path,
             windows=group.sub_windows,
             model=whisper_model,
         )
+
         session = run_matching(
             chunks=chunks,
             verse_text=verse_text,
@@ -311,30 +310,21 @@ def run(
 
 
 def main() -> None:
+    BASE_DIR = Path(__file__).parent
     parser = argparse.ArgumentParser(description="Pipeline-Orchestrierung")
-    parser.add_argument(
-        "--video",
-        type=Path,
-        default="/home/muhammed-emin-eser/desk/din/quran/maher_workaround/Quran_cropped/سورة المدثر (74) بصوت القارئ الشيخ ماهر المعيقلي [C-BOnEXP9qA].text_only.mp4",
-    )
-    parser.add_argument(
-        "--audio",
-        type=Path,
-        default="/home/muhammed-emin-eser/desk/din/quran/maher_playlist/maher_playlist/سورة المدثر (74) بصوت القارئ الشيخ ماهر المعيقلي.flac",
-    )
-    parser.add_argument(
-        "--text",
-        type=Path,
-        default="/home/muhammed-emin-eser/desk/din/quran/eng_translation/chunked_translation/74_Al-Muddathir.txt",
-    )
+    parser.add_argument("--video", required=True, type=Path)
+    parser.add_argument("--audio", required=True, type=Path)
+    parser.add_argument("--text", required=True, type=Path)
     parser.add_argument(
         "--output",
+        default=str(BASE_DIR / "output"),
+        type=Path,
         help="Ausgabeverzeichnis (Dateiname wird aus --text abgeleitet)",
-        default=Path("./output/mapping"),
     )
     parser.add_argument("--device", default=None, type=str)
-    parser.add_argument("--surah", type=int, help="Surah-Nummer (z.B. 98)", default=74)
-
+    parser.add_argument(
+        "--surah", required=True, type=int, help="Surah-Nummer (z.B. 98)"
+    )
     args = parser.parse_args()
 
     mapping_path = args.output / (args.text.stem + ".mapping")

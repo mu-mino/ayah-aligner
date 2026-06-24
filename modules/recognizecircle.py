@@ -44,6 +44,7 @@ CIRCLE_REPEAT_SIM_THRESHOLD: float = 0.95
 # Hilfsfunktionen
 # ---------------------------------------------------------------------------
 
+
 def _require_cv2() -> None:
     if cv2 is None:
         raise RuntimeError(
@@ -69,6 +70,7 @@ def _shrink_range(rng: Tuple[float, float], pct: float) -> Tuple[float, float]:
 # Datenstrukturen
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class DetectorParams:
     """Parametrisierbarer Satz an Erkennungsgrenzen für den Ring-Detektor."""
@@ -84,6 +86,7 @@ class DetectorParams:
 
     def clamp(self, bounds: "DetectorParams") -> "DetectorParams":
         """Begrenzt alle Ranges auf die Grenzen von *bounds*."""
+
         def clamp_range(rng, bound):
             return (max(bound[0], rng[0]), min(bound[1], rng[1]))
 
@@ -92,9 +95,15 @@ class DetectorParams:
             width_range=clamp_range(self.width_range, bounds.width_range),
             height_range=clamp_range(self.height_range, bounds.height_range),
             aspect_range=clamp_range(self.aspect_range, bounds.aspect_range),
-            circularity_range=clamp_range(self.circularity_range, bounds.circularity_range),
-            stroke_ratio_range=clamp_range(self.stroke_ratio_range, bounds.stroke_ratio_range),
-            hole_ratio_range=clamp_range(self.hole_ratio_range, bounds.hole_ratio_range),
+            circularity_range=clamp_range(
+                self.circularity_range, bounds.circularity_range
+            ),
+            stroke_ratio_range=clamp_range(
+                self.stroke_ratio_range, bounds.stroke_ratio_range
+            ),
+            hole_ratio_range=clamp_range(
+                self.hole_ratio_range, bounds.hole_ratio_range
+            ),
             stroke_fraction=self.stroke_fraction,
         )
 
@@ -118,9 +127,9 @@ class RingCandidate:
     outer_mask: np.ndarray
     inner_mask: np.ndarray
     ring_mask: np.ndarray
-    bbox: Tuple[int, int, int, int]   # (x, y, w, h)
-    center: Tuple[float, float]       # (cx, cy)
-    radius: float                     # max(w, h) / 2
+    bbox: Tuple[int, int, int, int]  # (x, y, w, h)
+    center: Tuple[float, float]  # (cx, cy)
+    radius: float  # max(w, h) / 2
     stroke_ratio: float
     hole_ratio: float
     circularity: float
@@ -131,6 +140,7 @@ class RingCandidate:
 # ---------------------------------------------------------------------------
 # Kern-Detektion
 # ---------------------------------------------------------------------------
+
 
 def _score_candidate(candidate: RingCandidate, params: DetectorParams) -> float:
     """Geometrischer Güte-Score (höher = besser)."""
@@ -192,7 +202,9 @@ def _find_ring_candidates(
         if perimeter <= 0:
             continue
         circularity = 4.0 * math.pi * area / (perimeter * perimeter)
-        if not (params.circularity_range[0] <= circularity <= params.circularity_range[1]):
+        if not (
+            params.circularity_range[0] <= circularity <= params.circularity_range[1]
+        ):
             continue
 
         outer = np.zeros_like(binary)
@@ -201,7 +213,9 @@ def _find_ring_candidates(
         ksize = max(3, int(round(max(w, h) * params.stroke_fraction)))
         if ksize % 2 == 0:
             ksize += 1
-        inner = cv2.erode(outer, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (ksize, ksize)))
+        inner = cv2.erode(
+            outer, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (ksize, ksize))
+        )
         ring = cv2.subtract(outer, inner)
 
         outer_area = cv2.countNonZero(outer)
@@ -210,7 +224,9 @@ def _find_ring_candidates(
         stroke_ratio = cv2.countNonZero(ring) / float(outer_area)
         hole_ratio = cv2.countNonZero(inner) / float(outer_area)
 
-        if not (params.stroke_ratio_range[0] <= stroke_ratio <= params.stroke_ratio_range[1]):
+        if not (
+            params.stroke_ratio_range[0] <= stroke_ratio <= params.stroke_ratio_range[1]
+        ):
             continue
         if not (params.hole_ratio_range[0] <= hole_ratio <= params.hole_ratio_range[1]):
             continue
@@ -238,7 +254,10 @@ def _find_ring_candidates(
 # Empirische Parametergrenzen (aus Beispiel-Frames abgeleitet)
 # ---------------------------------------------------------------------------
 
-def _derive_empirical_bounds(sample_dir: Path = Path("tmp_frames")) -> Optional[DetectorParams]:
+
+def _derive_empirical_bounds(
+    sample_dir: Path = Path("tmp_frames"),
+) -> Optional[DetectorParams]:
     """
     Berechnet robuste Grenzen (5–95 Perzentil) aus beschrifteten Beispiel-Frames.
     Gibt None zurück, wenn keine Frames gefunden werden.
@@ -248,8 +267,13 @@ def _derive_empirical_bounds(sample_dir: Path = Path("tmp_frames")) -> Optional[
         return None
 
     metrics: Dict[str, list] = {
-        "areas": [], "widths": [], "heights": [], "aspects": [],
-        "circularities": [], "stroke_ratios": [], "hole_ratios": [],
+        "areas": [],
+        "widths": [],
+        "heights": [],
+        "aspects": [],
+        "circularities": [],
+        "stroke_ratios": [],
+        "hole_ratios": [],
     }
 
     for path in sample_paths:
@@ -257,7 +281,9 @@ def _derive_empirical_bounds(sample_dir: Path = Path("tmp_frames")) -> Optional[
         if gray is None:
             continue
         binary = _threshold_binary(gray)
-        candidates, _ = _find_ring_candidates(binary, DEFAULT_DETECTOR_PARAMS, score_candidates=False)
+        candidates, _ = _find_ring_candidates(
+            binary, DEFAULT_DETECTOR_PARAMS, score_candidates=False
+        )
         for cand in candidates:
             x, y, w, h = cand.bbox
             metrics["areas"].append(float(cv2.countNonZero(cand.outer_mask)))
@@ -276,19 +302,49 @@ def _derive_empirical_bounds(sample_dir: Path = Path("tmp_frames")) -> Optional[
         lo, hi = np.percentile(vals, [5, 95])
         return (float(lo), float(hi))
 
-    def widen(lo: float, hi: float, base: Tuple[float, float], min_pad: float = 0.02) -> Tuple[float, float]:
+    def widen(
+        lo: float, hi: float, base: Tuple[float, float], min_pad: float = 0.02
+    ) -> Tuple[float, float]:
         span = hi - lo
         pad = max(min_pad, 0.05 * span)
         return (max(base[0], lo - pad), min(base[1], hi + pad))
 
     return DetectorParams(
-        area_range=widen(*perc_range(metrics["areas"]), DEFAULT_DETECTOR_PARAMS.area_range, min_pad=80.0),
-        width_range=widen(*perc_range(metrics["widths"]), DEFAULT_DETECTOR_PARAMS.width_range, min_pad=1.0),
-        height_range=widen(*perc_range(metrics["heights"]), DEFAULT_DETECTOR_PARAMS.height_range, min_pad=1.0),
-        aspect_range=widen(*perc_range(metrics["aspects"]), DEFAULT_DETECTOR_PARAMS.aspect_range, min_pad=0.1),
-        circularity_range=widen(*perc_range(metrics["circularities"]), DEFAULT_DETECTOR_PARAMS.circularity_range, min_pad=0.03),
-        stroke_ratio_range=widen(*perc_range(metrics["stroke_ratios"]), DEFAULT_DETECTOR_PARAMS.stroke_ratio_range, min_pad=0.01),
-        hole_ratio_range=widen(*perc_range(metrics["hole_ratios"]), DEFAULT_DETECTOR_PARAMS.hole_ratio_range, min_pad=0.01),
+        area_range=widen(
+            *perc_range(metrics["areas"]),
+            DEFAULT_DETECTOR_PARAMS.area_range,
+            min_pad=80.0,
+        ),
+        width_range=widen(
+            *perc_range(metrics["widths"]),
+            DEFAULT_DETECTOR_PARAMS.width_range,
+            min_pad=1.0,
+        ),
+        height_range=widen(
+            *perc_range(metrics["heights"]),
+            DEFAULT_DETECTOR_PARAMS.height_range,
+            min_pad=1.0,
+        ),
+        aspect_range=widen(
+            *perc_range(metrics["aspects"]),
+            DEFAULT_DETECTOR_PARAMS.aspect_range,
+            min_pad=0.1,
+        ),
+        circularity_range=widen(
+            *perc_range(metrics["circularities"]),
+            DEFAULT_DETECTOR_PARAMS.circularity_range,
+            min_pad=0.03,
+        ),
+        stroke_ratio_range=widen(
+            *perc_range(metrics["stroke_ratios"]),
+            DEFAULT_DETECTOR_PARAMS.stroke_ratio_range,
+            min_pad=0.01,
+        ),
+        hole_ratio_range=widen(
+            *perc_range(metrics["hole_ratios"]),
+            DEFAULT_DETECTOR_PARAMS.hole_ratio_range,
+            min_pad=0.01,
+        ),
         stroke_fraction=RING_STROKE_FRACTION,
     )
 
@@ -304,6 +360,7 @@ def _get_empirical_bounds() -> DetectorParams:
 # ---------------------------------------------------------------------------
 # Detektor-Presets
 # ---------------------------------------------------------------------------
+
 
 def _build_detector_presets() -> List[Tuple[str, DetectorParams]]:
     """
@@ -348,7 +405,12 @@ def _build_detector_presets() -> List[Tuple[str, DetectorParams]]:
         stroke_fraction=max(0.18, min(0.26, bounds.stroke_fraction - 0.02)),
     )
 
-    return [("base", bounds), ("tight", tight), ("stroke_plus", stroke_plus), ("stroke_minus", stroke_minus)]
+    return [
+        ("base", bounds),
+        ("tight", tight),
+        ("stroke_plus", stroke_plus),
+        ("stroke_minus", stroke_minus),
+    ]
 
 
 DETECTOR_PRESETS: List[Tuple[str, DetectorParams]] = _build_detector_presets()
@@ -357,6 +419,7 @@ DETECTOR_PRESETS: List[Tuple[str, DetectorParams]] = _build_detector_presets()
 # ---------------------------------------------------------------------------
 # Patch-Extraktion und Ähnlichkeitsvergleich
 # ---------------------------------------------------------------------------
+
 
 def _extract_circle_patch(
     gray: np.ndarray,
@@ -382,7 +445,9 @@ def _extract_circle_patch(
         return None
 
     crop_r = cv2.resize(crop, (patch_size, patch_size), interpolation=cv2.INTER_AREA)
-    outer_r = cv2.resize(outer, (patch_size, patch_size), interpolation=cv2.INTER_NEAREST)
+    outer_r = cv2.resize(
+        outer, (patch_size, patch_size), interpolation=cv2.INTER_NEAREST
+    )
     mask = outer_r > 0
     if int(mask.sum()) == 0:
         return None
@@ -430,6 +495,7 @@ def _best_circle_patch(
 # Normalisierung
 # ---------------------------------------------------------------------------
 
+
 def normalize_ring_mask(gray: np.ndarray) -> Tuple[np.ndarray, int]:
     """
     Unterdrückt innere Beschriftungen von Ring-Markern.
@@ -450,6 +516,7 @@ def normalize_ring_mask(gray: np.ndarray) -> Tuple[np.ndarray, int]:
 # ---------------------------------------------------------------------------
 # Öffentliche Erkennungs-API
 # ---------------------------------------------------------------------------
+
 
 def detect_markers_from_gray(gray: np.ndarray) -> int:
     """
@@ -479,6 +546,7 @@ def detect_markers(path: str) -> int:
     frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     return detect_markers_from_gray(frame)
 
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("path")
@@ -486,3 +554,4 @@ if __name__ == "__main__":
 
     circle_count = detect_markers(args.path)
     print(circle_count)
+

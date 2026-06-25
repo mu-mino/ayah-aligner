@@ -262,6 +262,66 @@ def _save_whisper_cache(video_path: Path, result: ChunkTranscription) -> None:
     )
 
 
+def stamp_per_segment_transcription(
+    audio_path: str,
+    time_window: Optional[FrameWindow] = None,
+    device: Optional[str] = None,
+    model_name: str = "large-v2",
+    compute_type: str = "float16",
+):
+    # 1. Device bestimmen (falls nicht übergeben)
+    import torch
+
+    if device is None:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+    if device == "cpu" and compute_type == "float16":
+        compute_type = "int8"
+
+    # 2. Modell laden via whisperx
+    model = whisperx.load_model(
+        model_name,
+        device=device,
+        compute_type=compute_type,
+        language=WHISPER_LANGUAGE,
+    )
+
+    # 3. Audio laden
+    audio = whisperx.load_audio(audio_path)
+
+    # Falls ein FrameWindow übergeben wurde, schneiden wir das Audio passend zu
+    if time_window is not None:
+        # whisperx.load_audio lädt das Audio mit einer Samplerate von 16000Hz
+        sample_rate = 16000
+        start_sample = int(time_window.start_sec * sample_rate)
+        end_sample = int(time_window.end_sec * sample_rate)
+        audio = audio[start_sample:end_sample]
+
+    # 4. Reine Whisper-Transkription (liefert Segmente/Sätze)
+    result = model.transcribe(audio, batch_size=16)
+
+    # Zeit-Offset hinzufügen, falls wir einen Ausschnitt gewählt haben
+    offset = time_window.start_sec if time_window is not None else 0.0
+
+    print("\n--- Transkription nach Segmenten ---")
+    segments_with_absolute_timestamps: list[dict] = []
+    # 5. Iteriere durch alle Sätze (Segmente)
+    for segment in result["segments"]:
+        text = segment["text"].strip()
+        start = segment.get("start")
+        end = segment.get("end")
+        if start is not None and end is not None:
+            # Offset addieren, damit die Timestamps zum originalen Audio passen
+            absoluter_start = start + offset
+            absolutes_ende = end + offset
+            segment["start"] = absoluter_start
+            segment["end"] = absolutes_ende
+            segments_with_absolute_timestamps.append(segment)
+            print(f"[{absoluter_start:05.2f}s -> {absolutes_ende:05.2f}s]: {text}")
+        else:
+            print(f"[Keine Zeit]: {text}")
+    return segments_with_absolute_timestamps
+
+
 def transcribe_chunk(
     model,
     video_path: Path,
@@ -365,9 +425,18 @@ def transcribe_chunks(
     if model is None:
         model = load_model(device=device)
 
-    results: List[ChunkTranscription] = []
+    results_with_subs: List[ChunkTranscription] = []
+    single_window: list[dict]
     for window in windows:
-        transcription = transcribe_chunk(model, video_path, window)
-        results.append(transcription)
+        if len(windows) > 1:
+            results_with_subs.append(
+                transcribe_chunk(model, video_path, window)
+            )  # has_subs()
+        else:
+            single_window.append(
+                stamp_per_segment_transcription(
+                    audio_path=video_path, time_window=window
+                )
+            )
 
-    return results
+    return results_with_subs, True if results_with_subs else single_window, False

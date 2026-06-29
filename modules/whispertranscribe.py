@@ -271,6 +271,7 @@ def stamp_per_segment_transcription(
 ):
     # 1. Device bestimmen (falls nicht übergeben)
     import torch
+    import whisperx
 
     if device is None:
         device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -291,7 +292,7 @@ def stamp_per_segment_transcription(
     # Falls ein FrameWindow übergeben wurde, schneiden wir das Audio passend zu
     if time_window is not None:
         # whisperx.load_audio lädt das Audio mit einer Samplerate von 16000Hz
-        sample_rate = 16000
+        sample_rate = AUDIO_SAMPLE_RATE
         start_sample = int(time_window.start_sec * sample_rate)
         end_sample = int(time_window.end_sec * sample_rate)
         audio = audio[start_sample:end_sample]
@@ -426,7 +427,7 @@ def transcribe_chunks(
         model = load_model(device=device)
 
     results_with_subs: List[ChunkTranscription] = []
-    single_window: list[dict]
+    single_window: list[dict] = []
     for window in windows:
         if len(windows) > 1:
             results_with_subs.append(
@@ -439,4 +440,4 @@ def transcribe_chunks(
                 )
             )
 
-    return results_with_subs, True if results_with_subs else single_window, False
+    return (results_with_subs, True) if results_with_subs else (single_window, False)

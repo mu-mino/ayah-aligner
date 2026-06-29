@@ -5,7 +5,7 @@ Dieses Modul enthält ausschließlich die Logik, um Zeitpunkte, an denen
 Kreise (Ring-Marker) identifiziert wurden, im projekteigenen Format zu
 dokumentieren und zu schreiben:
 
-    [MM:SS] :: inhalt
+    [HH:MM:SS] :: inhalt
 
 Nicht enthalten: Kreiserkennung, Video-Analyse, OCR, Rendering.
 """
@@ -21,10 +21,11 @@ from typing import List, Optional, Tuple
 
 
 def seconds_to_timestamp(seconds: float) -> str:
-    """Wandelt Sekunden in das Zeitstempel-Format MM:SS um."""
-    minutes = int(seconds // 60)
+    """Wandelt Sekunden in das Zeitstempel-Format HH:MM:SS um."""
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
     secs = int(seconds % 60)
-    return f"{minutes:02d}:{secs:02d}"
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}"
 
 
 # ---------------------------------------------------------------------------
@@ -100,8 +101,8 @@ def parse_text_file(path: Path) -> Tuple[List[str], List[str]]:
 
 
 def build_title_line(title_lines: List[str]) -> str:
-    """Erstellt die Titelzeile im Mapping-Format: '[00:00] :: Titel'."""
-    return f"[00:00] :: {format_title_block(title_lines)}"
+    """Erstellt die Titelzeile im Mapping-Format: '[00:00:00] :: Titel'."""
+    return f"[00:00:00] :: {format_title_block(title_lines)}"
 
 
 def build_verse_line(timestamp: str, verse_entries: List[Tuple[int, str]]) -> str:
@@ -118,7 +119,7 @@ def build_verse_line(timestamp: str, verse_entries: List[Tuple[int, str]]) -> st
     Beispiel
     --------
     >>> build_verse_line("00:42", [(3, "Text A"), (4, "Text B")])
-    '[00:42] :: 3: Text A 4: Text B'
+    '[00:00:42] :: 3: Text A 4: Text B'
     """
     content = " ".join(f"{num}: {text}" for num, text in verse_entries)
     return f"[{timestamp}] :: {content}"
@@ -133,7 +134,7 @@ def write_mapping(lines: List[str], dest: Path) -> Path:
     """
     Schreibt ein Mapping in die Zieldatei.
 
-    Format pro Zeile: '[MM:SS] :: inhalt'
+    Format pro Zeile: '[HH:MM:SS] :: inhalt'
 
     Wirft RuntimeError, wenn keine Vers-Zeilen vorhanden sind (nur
     Titelzeile würde eine leere Datei implizieren).
@@ -164,7 +165,7 @@ def parse_mapping_line(line: str) -> Optional[Tuple[str, str]]:
     """
     Parst eine Mapping-Zeile und gibt (timestamp, inhalt) zurück.
 
-    Erwartet das Format '[MM:SS] :: inhalt'.
+    Erwartet das Format '[HH:MM:SS] :: inhalt'.
     Gibt None zurück, wenn das Format nicht erkannt wird.
     """
     m = re.match(r"^\[(\d{2}:\d{2})\]\s*::\s*(.*)", line)

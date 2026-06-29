@@ -35,9 +35,8 @@ from modules.circlelog import (
 from modules.whispertranscribe import transcribe_chunks, load_model
 from modules.semanticmatch import (
     run_matching,
-    extract_verse_text,
-    extract_verse_number,
     patch_circlelog,
+    mapping_to_per_verse,
 )
 
 BASE_DIR = Path(__file__).parent
@@ -68,7 +67,7 @@ def write_vars(global_vars, local_vars=None):
         and k != "write_vars"
     }
 
-    with open("for_loop_grey.pkl", "wb") as f:
+    with open("main_for_loop.pkl", "wb") as f:
         dill.dump(filtered_vars, f)
 
 
@@ -172,6 +171,8 @@ def run(
             groups.append(current_group)
         elif current_group is not None:
             current_group.sub_windows.append(window)
+        if i == 0:
+            n += 1
 
     # ------------------------------------------------------------------
     # 3. Circlelog aufbauen
@@ -180,9 +181,9 @@ def run(
     #    Fall 1 — erstes Fenster hat Kreis:
     #        Jede Gruppe bekommt ihren eigenen Kreis-Timestamp (kein Shift).
     #    Fall 2 — kein Kreis im ersten Fenster, erste Sichtung count=1:
-    #        Vers 1 bei [00:10], danach normaler Shift-Flow.
+    #        Vers 1 bei [00:00:10], danach normaler Shift-Flow.
     #    Fall 3/4 — kein Kreis im ersten Fenster, erste Sichtung count>1:
-    #        Vers 1 bei [00:10], Verse 2..N bei T0 (separate Zeile),
+    #        Vers 1 bei [00:00:10], Verse 2..N bei T0 (separate Zeile),
     #        danach normaler Shift-Flow.
     # ------------------------------------------------------------------
     title_lines, numbered_lines = parse_text_file(text_path)
@@ -224,7 +225,7 @@ def run(
             ts = (
                 seconds_to_timestamp(groups[idx].circle_window.end_sec)
                 if idx == 0
-                else seconds_to_timestamp(groups[idx - 1].circle_window.start_sec)
+                else seconds_to_timestamp(groups[idx].circle_window.start_sec)
             )
             group.mapping_ts = ts
             line = build_verse_line(ts, group.verses)
@@ -239,30 +240,34 @@ def run(
     groups_with_subs = [g for g in groups if g.sub_windows]
     if not groups_with_subs:
         return
-
+    write_vars(globals(), locals())
     whisper_model = load_model(device=whisper_device)
 
-    for group in groups_with_subs:
+    for group in groups:
         group_idx = groups.index(group)
         if group_idx + 1 >= len(groups):
             continue  # kein Folge-Eintrag → kein Matching möglich
         next_group = groups[group_idx + 1]
-        verse_text = extract_verse_text(next_group.mapping_line)
-        ayah = extract_verse_number(next_group.mapping_line)
-        if not verse_text or not ayah:
+        id_verse: dict[int, str] = mapping_to_per_verse(next_group.mapping_line)
+        if not id_verse:
             continue
 
-        chunks = transcribe_chunks(
+        chunks, is_single = transcribe_chunks(
             video_path=audio_path,
-            windows=group.sub_windows,
+            windows=(
+                (next_group.sub_windows)
+                if next_group.sub_windows
+                else ([next_group.circle_window])
+            )
+            if group.sub_windows
+            else ([group.circle_window]),
             model=whisper_model,
         )
 
         session = run_matching(
             chunks=chunks,
-            verse_text=verse_text,
             surah=surah,
-            ayah=ayah,
+            dict_of_verses=id_verse,
         )
 
         if session.results:

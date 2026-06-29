@@ -29,7 +29,7 @@ import regex
 from modules.whispertranscribe import ChunkTranscription
 from sentence_transformers import SentenceTransformer, util
 
-model = SentenceTransformer("symanto/sn-xlm-roberta-base-snli-mnli-anli-xnli")
+# model = SentenceTransformer("symanto/sn-xlm-roberta-base-snli-mnli-anli-xnli")
 # ---------------------------------------------------------------------------
 # Scoring helpers
 # ---------------------------------------------------------------------------
@@ -167,7 +167,7 @@ class GuardReport:
 class MatchSession:
     """Gesamtergebnis einer Matching-Sitzung für einen Vers."""
 
-    verse_text: str
+    mapping_text: str
     results: List[MatchResult] = field(default_factory=list)
     guard: Optional[GuardReport] = None
 
@@ -177,22 +177,28 @@ class MatchSession:
 # ---------------------------------------------------------------------------
 
 
-def extract_verse_text(mapping_line: str) -> Optional[str]:
-    """
-    Extrahiert den Vers-Text aus einer einzelnen circlelog-Zeile.
-    Erwartet: '[MM:SS] :: text'
-    """
-    m = re.match(r"^\[\d{2}:\d{2}\]\s*::\s*(.+)$", mapping_line.strip())
-    if not m:
-        return None
-    text = m.group(1).strip()
-    return re.sub(r"^\d+:\s*", "", text)
-
-
-def extract_verse_number(mapping_line: str) -> Optional[int]:
-    """Extrahiert die erste Vers-Nummer aus einer circlelog-Zeile."""
-    m = re.match(r"^\[\d{2}:\d{2}\]\s*::\s*(\d+):", mapping_line.strip())
-    return int(m.group(1)) if m else None
+def mapping_to_per_verse(mapping_line: str) -> Optional[dict]:
+    mapping_stamp = re.match(
+        r"^\[\d{2}:\d{2}:\d{2}\]\s*::\s*(\d+):", mapping_line.strip()
+    )
+    index_first = int(mapping_stamp.end(1))
+    weitere_matches = list(re.finditer(r"\d+", mapping_line.strip()[index_first:]))
+    id_verse = {int(match.group(0)): match for match in weitere_matches}
+    res = {}
+    last = None
+    overlap = mapping_stamp.end(0)
+    for id, match in id_verse.items():
+        if not last:
+            last = match
+            continue
+        elif (int(last.group(0)) + 1) == id:
+            res[id - 1] = mapping_line[
+                overlap + last.end(0) + 1 : overlap + match.start(0) - 1
+            ]
+            last = match
+    else:
+        res[id] = mapping_line[overlap + last.end(0) + 1 :]
+    return res
 
 
 # ---------------------------------------------------------------------------
@@ -370,9 +376,9 @@ def _fill_gaps(results: List[MatchResult], verse_text: str) -> None:
             arabic_text_curr = curr.chunk.raw_text
 
             # Embeddings (Vektoren) für die Texte generieren
-            emb_english = model.encode(english_gap_text, convert_to_tensor=True)
-            emb_prev = model.encode(arabic_text_prev, convert_to_tensor=True)
-            emb_curr = model.encode(arabic_text_curr, convert_to_tensor=True)
+            emb_english = []
+            emb_prev = []
+            emb_curr = []
 
             # Ähnlichkeit berechnen
             score_prev = util.cos_sim(emb_english, emb_prev).item()
@@ -506,10 +512,9 @@ def run_guard(results: List[MatchResult], verse_text: str) -> GuardReport:
 
 
 def run_matching(
-    chunks: List[ChunkTranscription],
-    verse_text: str,
+    chunks: List,  # ChunkTranscription or dict
+    dict_of_verses: dict,
     surah: int,
-    ayah: int,
 ) -> MatchSession:
     """
     Matcht jeden arabischen Chunk gegen den englischen Vers-Text via quran.com API.
@@ -520,30 +525,38 @@ def run_matching(
         3. Wort-Übersetzungen [i..j] konkatenieren → Query
         4. SequenceMatcher findet besten Substring-Match in verse_text
     """
-    session = MatchSession(verse_text=verse_text)
+    session = MatchSession(mapping_text=" ".join(dict_of_verses.values()))
 
     if not chunks:
         session.guard = GuardReport(completeness_passed=True)
         return session
 
     for chunk in chunks:
-        verse_words = _fetch_verse_words(surah, ayah)  # per Chunk, gecacht
-        translations = []
-        for word in chunk.raw_text.split():
-            translation = _word_to_translation(word, verse_words)
-            if translation:
-                translations.append(translation)
+        for ayah, verse_text in dict_of_verses.items():
+            verse_words = _fetch_verse_words(surah, ayah)  # per Chunk, gecacht
+            translations = []
+            match chunk:
+                case [[{"text": text_value}, *_], *_]:
+                    text = text_value.split()
+                case _:
+                    text = getattr(chunk, "raw_text", "").split()
+            for txt in text:
+                translation = _word_to_translation(txt, verse_words)
+                if translation:
+                    translations.append(translation)
 
-        query = " ".join(translations)
-        char_start, char_end, span_text, score = find_semantic_span(query, verse_text)
-        session.results.append(
-            MatchResult(
-                chunk=chunk,
-                arabic_text=chunk.raw_text,
-                span=TextSpan(start=char_start, end=char_end, text=span_text),
-                score=score,
+            query = " ".join(translations)
+            char_start, char_end, span_text, score = find_semantic_span(
+                query, verse_text
             )
-        )
+            session.results.append(
+                MatchResult(
+                    chunk=chunk,
+                    arabic_text=text,
+                    span=TextSpan(start=char_start, end=char_end, text=span_text),
+                    score=score,
+                )
+            )
 
     _fill_gaps(session.results, verse_text)
     session.guard = run_guard(session.results, verse_text)
@@ -564,7 +577,7 @@ def patch_circlelog(
     Fügt Sub-Einträge in die Circlelog-Datei ein.
 
     Für jeden MatchResult aus der MatchSession wird ein Sub-Eintrag erzeugt:
-        [MM:SS] :: <gematchter Span-Text>
+        [HH:MM:SS] :: <gematchter Span-Text>
 
     Der Timestamp stammt aus dem FrameWindow des zugehörigen Chunks
     (window.start_sec). Die Sub-Einträge werden direkt nach dem betroffenen
@@ -573,7 +586,7 @@ def patch_circlelog(
     Parameters
     ----------
     mapping_path       : Pfad zur Circlelog-Mapping-Datei.
-    affected_timestamp : Timestamp des betroffenen Eintrags, z. B. "00:10".
+    affected_timestamp : Timestamp des betroffenen Eintrags, z. B. "00:00:10".
     session            : MatchSession mit den Ergebnissen aus run_matching().
     """
     from modules.circlelog import seconds_to_timestamp

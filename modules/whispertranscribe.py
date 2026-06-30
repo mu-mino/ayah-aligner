@@ -72,6 +72,7 @@ class TranscriptSegment:
     start: float  # Sekunden relativ zum Videobeginn
     end: float
     text: str
+    stamp: str = ""
 
 
 @dataclass
@@ -232,6 +233,10 @@ def _whisper_cache_path(video_path: Path, window: FrameWindow) -> Path:
     )
 
 
+def _format_segment_stamp(start: float, end: float) -> str:
+    return f"[{start:05.2f}s -> {end:05.2f}s]"
+
+
 def _load_whisper_cache(
     video_path: Path, window: FrameWindow
 ) -> Optional[ChunkTranscription]:
@@ -239,10 +244,18 @@ def _load_whisper_cache(
     if not cache_file.exists():
         return None
     data = json.loads(cache_file.read_text(encoding="utf-8"))
-    segments = [
-        TranscriptSegment(start=s["start"], end=s["end"], text=s["text"])
-        for s in data["segments"]
-    ]
+    segments = []
+    for s in data["segments"]:
+        start = s["start"]
+        end = s["end"]
+        segments.append(
+            TranscriptSegment(
+                start=start,
+                end=end,
+                text=s["text"],
+                stamp=s.get("stamp", _format_segment_stamp(start, end)),
+            )
+        )
     return ChunkTranscription(
         window=window, segments=segments, raw_text=data["raw_text"]
     )
@@ -253,7 +266,8 @@ def _save_whisper_cache(video_path: Path, result: ChunkTranscription) -> None:
     cache_file = _whisper_cache_path(video_path, result.window)
     data = {
         "segments": [
-            {"start": s.start, "end": s.end, "text": s.text} for s in result.segments
+            {"start": s.start, "end": s.end, "text": s.text, "stamp": s.stamp}
+            for s in result.segments
         ],
         "raw_text": result.raw_text,
     }
@@ -304,7 +318,7 @@ def stamp_per_segment_transcription(
     offset = time_window.start_sec if time_window is not None else 0.0
 
     print("\n--- Transkription nach Segmenten ---")
-    segments_with_absolute_timestamps: list[dict] = []
+    segments_with_absolute_timestamps: list[TranscriptSegment] = []
     # 5. Iteriere durch alle Sätze (Segmente)
     for segment in result["segments"]:
         text = segment["text"].strip()
@@ -314,10 +328,16 @@ def stamp_per_segment_transcription(
             # Offset addieren, damit die Timestamps zum originalen Audio passen
             absoluter_start = start + offset
             absolutes_ende = end + offset
-            segment["start"] = absoluter_start
-            segment["end"] = absolutes_ende
-            segments_with_absolute_timestamps.append(segment)
-            print(f"[{absoluter_start:05.2f}s -> {absolutes_ende:05.2f}s]: {text}")
+            stamp = _format_segment_stamp(absoluter_start, absolutes_ende)
+            segments_with_absolute_timestamps.append(
+                TranscriptSegment(
+                    start=absoluter_start,
+                    end=absolutes_ende,
+                    text=text,
+                    stamp=stamp,
+                )
+            )
+            print(f"{stamp}: {text}")
         else:
             print(f"[Keine Zeit]: {text}")
     return segments_with_absolute_timestamps
@@ -378,11 +398,14 @@ def transcribe_chunk(
     offset = window.start_sec
     segments: List[TranscriptSegment] = []
     for seg in result.get("segments", []):
+        start = seg["start"] + offset
+        end = seg["end"] + offset + SEGMENT_END_TOLERANCE
         segments.append(
             TranscriptSegment(
-                start=seg["start"] + offset,
-                end=seg["end"] + offset + SEGMENT_END_TOLERANCE,
+                start=start,
+                end=end,
                 text=seg["text"].strip(),
+                stamp=_format_segment_stamp(start, end),
             )
         )
 
@@ -426,18 +449,8 @@ def transcribe_chunks(
     if model is None:
         model = load_model(device=device)
 
-    results_with_subs: List[ChunkTranscription] = []
-    single_window: list[dict] = []
+    results: List[ChunkTranscription] = []
     for window in windows:
-        if len(windows) > 1:
-            results_with_subs.append(
-                transcribe_chunk(model, video_path, window)
-            )  # has_subs()
-        else:
-            single_window.append(
-                stamp_per_segment_transcription(
-                    audio_path=video_path, time_window=window
-                )
-            )
+        results.append(transcribe_chunk(model, video_path, window))
 
-    return (results_with_subs, True) if results_with_subs else (single_window, False)
+    return results

@@ -179,25 +179,21 @@ class MatchSession:
 
 def mapping_to_per_verse(mapping_line: str) -> Optional[dict]:
     mapping_stamp = re.match(
-        r"^\[\d{2}:\d{2}:\d{2}\]\s*::\s*(\d+):", mapping_line.strip()
+        r"^\[\d{2}:\d{2}:\d{2}\]\s*::\s*(.*)$", mapping_line.strip()
     )
-    index_first = int(mapping_stamp.end(1))
-    weitere_matches = list(re.finditer(r"\d+", mapping_line.strip()[index_first:]))
-    id_verse = {int(match.group(0)): match for match in weitere_matches}
+    if not mapping_stamp:
+        return {}
+
+    content = mapping_stamp.group(1)
+    verse_markers = list(re.finditer(r"(?:^|\s)(\d+):\s*", content))
     res = {}
-    last = None
-    overlap = mapping_stamp.end(0)
-    for id, match in id_verse.items():
-        if not last:
-            last = match
-            continue
-        elif (int(last.group(0)) + 1) == id:
-            res[id - 1] = mapping_line[
-                overlap + last.end(0) + 1 : overlap + match.start(0) - 1
-            ]
-            last = match
-    else:
-        res[id] = mapping_line[overlap + last.end(0) + 1 :]
+    for index, marker in enumerate(verse_markers):
+        next_marker = (
+            verse_markers[index + 1] if index + 1 < len(verse_markers) else None
+        )
+        start = marker.end()
+        end = next_marker.start() if next_marker else len(content)
+        res[int(marker.group(1))] = content[start:end].strip()
     return res
 
 
@@ -512,7 +508,7 @@ def run_guard(results: List[MatchResult], verse_text: str) -> GuardReport:
 
 
 def run_matching(
-    chunks: List,  # ChunkTranscription or dict
+    chunks: List[ChunkTranscription],
     dict_of_verses: dict,
     surah: int,
 ) -> MatchSession:
@@ -531,35 +527,33 @@ def run_matching(
         session.guard = GuardReport(completeness_passed=True)
         return session
 
+    verse_words = []
+    for ayah in dict_of_verses:
+        verse_words.extend(_fetch_verse_words(surah, ayah))
+
     for chunk in chunks:
-        for ayah, verse_text in dict_of_verses.items():
-            verse_words = _fetch_verse_words(surah, ayah)  # per Chunk, gecacht
-            translations = []
-            match chunk:
-                case [[{"text": text_value}, *_], *_]:
-                    text = text_value.split()
-                case _:
-                    text = getattr(chunk, "raw_text", "").split()
-            for txt in text:
-                translation = _word_to_translation(txt, verse_words)
-                if translation:
-                    translations.append(translation)
+        translations = []
+        text = chunk.raw_text.split()
+        for txt in text:
+            translation = _word_to_translation(txt, verse_words)
+            if translation:
+                translations.append(translation)
 
-            query = " ".join(translations)
-            char_start, char_end, span_text, score = find_semantic_span(
-                query, verse_text
+        query = " ".join(translations)
+        char_start, char_end, span_text, score = find_semantic_span(
+            query, session.mapping_text
+        )
+        session.results.append(
+            MatchResult(
+                chunk=chunk,
+                arabic_text=text,
+                span=TextSpan(start=char_start, end=char_end, text=span_text),
+                score=score,
             )
-            session.results.append(
-                MatchResult(
-                    chunk=chunk,
-                    arabic_text=text,
-                    span=TextSpan(start=char_start, end=char_end, text=span_text),
-                    score=score,
-                )
-            )
+        )
 
-    _fill_gaps(session.results, verse_text)
-    session.guard = run_guard(session.results, verse_text)
+    _fill_gaps(session.results, session.mapping_text)
+    session.guard = run_guard(session.results, session.mapping_text)
     return session
 
 

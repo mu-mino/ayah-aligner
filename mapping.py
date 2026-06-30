@@ -90,6 +90,11 @@ class WindowGroup:
     mapping_line: str = ""
     mapping_ts: str = ""
 
+    @property
+    def all_windows(self) -> List[FrameWindow]:
+        """Gibt das Hauptfenster und alle Sub-Fenster als eine gemeinsame Liste zurück."""
+        return [self.circle_window] + self.sub_windows
+
 
 # ---------------------------------------------------------------------------
 # Hilfsfunktion
@@ -164,6 +169,8 @@ def run(
                 gray,
             )
         n = detect_markers_from_gray(gray)
+        if i == 0:
+            window.start_sec = window.end_sec
         if i == 0 and n > 0:
             first_window_has_circle = True
         if n > 0:
@@ -171,8 +178,10 @@ def run(
             groups.append(current_group)
         elif current_group is not None:
             current_group.sub_windows.append(window)
-        if i == 0:
+        elif i == 0 and n == 0:
             n += 1
+            current_group = WindowGroup(circle_window=window, circle_count=n)
+            groups.append(current_group)
 
     # ------------------------------------------------------------------
     # 3. Circlelog aufbauen
@@ -244,23 +253,19 @@ def run(
     whisper_model = load_model(device=whisper_device)
 
     for group in groups:
-        group_idx = groups.index(group)
-        if group_idx + 1 >= len(groups):
-            continue  # kein Folge-Eintrag → kein Matching möglich
-        next_group = groups[group_idx + 1]
-        id_verse: dict[int, str] = mapping_to_per_verse(next_group.mapping_line)
+        id_verse: dict[int, str] = mapping_to_per_verse(group.mapping_line)
         if not id_verse:
             continue
 
-        chunks, is_single = transcribe_chunks(
-            video_path=audio_path,
-            windows=(
-                (next_group.sub_windows)
-                if next_group.sub_windows
-                else ([next_group.circle_window])
-            )
+        all_windows = (
+            (group.all_windows if groups.index(group) != 0 else group.all_windows[1:])
             if group.sub_windows
-            else ([group.circle_window]),
+            else [group.circle_window]
+        )
+
+        chunks = transcribe_chunks(
+            video_path=audio_path,
+            windows=all_windows,
             model=whisper_model,
         )
 
@@ -279,22 +284,21 @@ def run(
             )
             # Der Sub-Entry zeigt den Vers-Anfang (verse_text[0:span.end]).
             # Der noch nicht abgedeckte Suffix (verse_text[span.end:]) wird als
-            # Fortsetzung in den circle_window-Eintrag der nächsten Gruppe geschrieben.
-            # next_group.mapping_ts bleibt unverändert (circle_window-Zeitstempel).
+            # Fortsetzung in den circle_window-Eintrag der Gruppe geschrieben.
             last_span_end = session.results[-1].span.end
-            continuation = session.verse_text[last_span_end:].strip()
+            continuation = session.mapping_text[last_span_end:].strip()
             first_sub_ts = seconds_to_timestamp(
                 session.results[0].chunk.window.start_sec
             )
-            first_verse_num = next_group.verses[0][0]
+            first_verse_num = group.verses[0][0]
             file_lines = mapping_path.read_text(encoding="utf-8").splitlines()
             verse_num_prepended = False
             cleaned: list = []
             for file_line in file_lines:
-                if file_line.startswith(f"[{next_group.mapping_ts}]"):
+                if file_line.startswith(f"[{group.mapping_ts}]"):
                     # Eintrag durch Fortsetzungstext ersetzen (oder entfernen wenn leer)
                     if continuation:
-                        cleaned.append(f"[{next_group.mapping_ts}] :: {continuation}")
+                        cleaned.append(f"[{group.mapping_ts}] :: {continuation}")
                     continue
                 if not verse_num_prepended and file_line.startswith(
                     f"[{first_sub_ts}]"

@@ -231,6 +231,8 @@ def run(
             group.mapping_line = line
             mapping_lines.append(line)
             unshifted_mode = True
+        elif idx == len(groups) - 1 and not group.verses:
+            continue
         else:
             # Fall 2 + normaler Shift-Flow
             ts = (
@@ -253,12 +255,14 @@ def run(
     write_vars(globals(), locals())
     whisper_model = load_model(device=whisper_device)
 
-    for group in groups:
+    for idx, group in enumerate(groups):
         id_verse: dict[int, str] = mapping_to_per_verse(group.mapping_line)
         if not id_verse:
             continue
 
         all_windows = group.all_windows if group.sub_windows else [group.circle_window]
+        if idx + 1 == len(groups) - 1 and not groups[idx + 1].verses:
+            all_windows = all_windows + [groups[idx + 1].circle_window]
 
         chunks = transcribe_chunks(
             video_path=audio_path,
@@ -294,7 +298,7 @@ def main() -> None:
     parser.add_argument("--text", required=True, type=Path)
     parser.add_argument(
         "--output",
-        default=str(BASE_DIR / "output"),
+        default=str(BASE_DIR / "output" / "mapping"),
         type=Path,
         help="Ausgabeverzeichnis (Dateiname wird aus --text abgeleitet)",
     )

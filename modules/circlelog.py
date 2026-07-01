@@ -100,9 +100,9 @@ def parse_text_file(path: Path) -> Tuple[List[str], List[str]]:
 # ---------------------------------------------------------------------------
 
 
-def build_title_line(title_lines: List[str]) -> str:
-    """Erstellt die Titelzeile im Mapping-Format: '[00:00:00] :: Titel'."""
-    return f"[00:00:00] :: {format_title_block(title_lines)}"
+def build_title_line(title_lines: List[str], timestamp: str = "00:00:00") -> str:
+    """Erstellt die Titelzeile im Mapping-Format: '[HH:MM:SS] :: Titel'."""
+    return f"[{timestamp}] :: {format_title_block(title_lines)}"
 
 
 def build_verse_line(timestamp: str, verse_entries: List[Tuple[int, str]]) -> str:

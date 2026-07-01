@@ -21,7 +21,7 @@ import dill
 
 import cv2
 
-ENABLE_TMP_WINDOW_FRAMES: bool = False
+ENABLE_TMP_WINDOW_FRAMES: bool = True
 
 from modules.videowindow import extract_windows, FrameWindow, run_ffprobe
 from modules.recognizecircle import detect_markers_from_gray
@@ -148,6 +148,8 @@ def run(
     # 2. Gruppen bilden — beim Durchlauf, nicht nachträglich
     #    circle_window (n>0) startet Gruppe; n=0 gehört zur letzten Gruppe
     # ------------------------------------------------------------------
+    title_window = windows[0] if windows and windows[0].end_sec <= 10.0 else None
+
     groups: List[WindowGroup] = []
     current_group: Optional[WindowGroup] = None
     first_window_has_circle: bool = False
@@ -156,7 +158,8 @@ def run(
         frames_dir = Path(__file__).parent / "tests" / "frames"
         frames_dir.mkdir(parents=True, exist_ok=True)
 
-    for i, window in enumerate(windows):
+    iter_windows = windows if title_window is None else windows[1:]
+    for i, window in enumerate(iter_windows):
         gray = _load_gray(video_path, window)
         if gray is None:
             continue
@@ -169,8 +172,6 @@ def run(
                 gray,
             )
         n = detect_markers_from_gray(gray)
-        if i == 0:
-            window.start_sec = window.end_sec
         if i == 0 and n > 0:
             first_window_has_circle = True
         if n > 0:
@@ -198,8 +199,9 @@ def run(
     title_lines, numbered_lines = parse_text_file(text_path)
     mapping_lines: List[str] = []
 
-    if title_lines:
-        mapping_lines.append(build_title_line(title_lines))
+    if title_lines and title_window:
+        title_ts = seconds_to_timestamp(title_window.start_sec)
+        mapping_lines.append(build_title_line(title_lines, title_ts))
 
     # Nach einem Fall-3/4-Split haben alle Folge-Gruppen keinen Shift-Vorgänger mehr —
     # sie bekommen ihren eigenen circle_window-Timestamp (wie Fall 1).
@@ -240,7 +242,6 @@ def run(
             line = build_verse_line(ts, group.verses)
             group.mapping_line = line
             mapping_lines.append(line)
-
     write_mapping(mapping_lines, mapping_path)
 
     # ------------------------------------------------------------------
@@ -257,11 +258,7 @@ def run(
         if not id_verse:
             continue
 
-        all_windows = (
-            (group.all_windows if groups.index(group) != 0 else group.all_windows[1:])
-            if group.sub_windows
-            else [group.circle_window]
-        )
+        all_windows = group.all_windows if group.sub_windows else [group.circle_window]
 
         chunks = transcribe_chunks(
             video_path=audio_path,

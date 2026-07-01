@@ -29,9 +29,18 @@ import regex
 from modules.whispertranscribe import ChunkTranscription
 from sentence_transformers import SentenceTransformer, util
 
-# model = SentenceTransformer("symanto/sn-xlm-roberta-base-snli-mnli-anli-xnli")
-# ---------------------------------------------------------------------------
-# Scoring helpers
+
+from pathlib import Path
+from sentence_transformers import SentenceTransformer
+
+model_path = Path(
+    "/home/muhammed-emin-eser/desk/din/ayah-aligner/symanto-model"
+).resolve()
+
+# local_files_only=True zwingt das Skript, komplett offline zu arbeiten
+model = SentenceTransformer(
+    model_path.as_posix(), local_files_only=True
+)  # Scoring helpers
 # ---------------------------------------------------------------------------
 
 
@@ -168,6 +177,7 @@ class MatchSession:
     """Gesamtergebnis einer Matching-Sitzung für einen Vers."""
 
     mapping_text: str
+    verse_ranges: List[Tuple[int, int, int, str]] = field(default_factory=list)
     results: List[MatchResult] = field(default_factory=list)
     guard: Optional[GuardReport] = None
 
@@ -347,9 +357,8 @@ def find_semantic_span(
 
 def _fill_gaps(results: List[MatchResult], verse_text: str) -> None:
     """
-    Füllt den Prefix-Bereich vor dem ersten Span und Lücken zwischen Spans.
-    Der Suffix (nach dem letzten Span) wird NICHT angefasst — er wird vom
-    circle_window-Eintrag der nächsten Gruppe als Fortsetzung übernommen.
+    Füllt den Prefix-Bereich vor dem ersten Span, Lücken zwischen Spans und
+    den Suffix nach dem letzten Span.
     Modifiziert results in-place.
     """
     if not results:
@@ -372,9 +381,9 @@ def _fill_gaps(results: List[MatchResult], verse_text: str) -> None:
             arabic_text_curr = curr.chunk.raw_text
 
             # Embeddings (Vektoren) für die Texte generieren
-            emb_english = []
-            emb_prev = []
-            emb_curr = []
+            emb_english = model.encode(english_gap_text, convert_to_tensor=True)
+            emb_prev = model.encode(arabic_text_prev, convert_to_tensor=True)
+            emb_curr = model.encode(arabic_text_curr, convert_to_tensor=True)
 
             # Ähnlichkeit berechnen
             score_prev = util.cos_sim(emb_english, emb_prev).item()
@@ -401,6 +410,11 @@ def _fill_gaps(results: List[MatchResult], verse_text: str) -> None:
                 # prev erweitern
                 prev.span.text = prev.span.text + symbol
                 prev.span.end += 1
+
+    last = by_start[-1]
+    if last.span.end < len(verse_text) and verse_text[last.span.end :].strip():
+        last.span.end = len(verse_text)
+        last.span.text = verse_text[last.span.start : last.span.end]
 
 
 # ---------------------------------------------------------------------------
@@ -521,7 +535,22 @@ def run_matching(
         3. Wort-Übersetzungen [i..j] konkatenieren → Query
         4. SequenceMatcher findet besten Substring-Match in verse_text
     """
-    session = MatchSession(mapping_text=" ".join(dict_of_verses.values()))
+    mapping_parts = []
+    verse_ranges: List[Tuple[int, int, int, str]] = []
+    cursor = 0
+    for ayah, verse_text in dict_of_verses.items():
+        if mapping_parts:
+            cursor += 1
+        start = cursor
+        mapping_parts.append(verse_text)
+        end = start + len(verse_text)
+        verse_ranges.append((ayah, start, end, verse_text))
+        cursor = end
+
+    session = MatchSession(
+        mapping_text=" ".join(mapping_parts),
+        verse_ranges=verse_ranges,
+    )
 
     if not chunks:
         session.guard = GuardReport(completeness_passed=True)
@@ -560,6 +589,21 @@ def run_matching(
 # ---------------------------------------------------------------------------
 # Circlelog patchen
 # ---------------------------------------------------------------------------
+
+
+def _format_span_with_verse_ids(session: MatchSession, start: int, end: int) -> str:
+    parts = []
+    for ayah, verse_start, verse_end, verse_text in session.verse_ranges:
+        overlap_start = max(start, verse_start)
+        overlap_end = min(end, verse_end)
+        if overlap_start >= overlap_end:
+            continue
+
+        text = verse_text[overlap_start - verse_start : overlap_end - verse_start]
+        if overlap_start == verse_start:
+            text = f"{ayah}: {text}"
+        parts.append(text.strip())
+    return " ".join(part for part in parts if part)
 
 
 def patch_circlelog(
@@ -604,7 +648,8 @@ def patch_circlelog(
     sub_entries = []
     for result in session.results:
         ts = seconds_to_timestamp(result.chunk.window.start_sec)
-        sub_entries.append(f"[{ts}] :: {result.span.text}")
+        text = _format_span_with_verse_ids(session, result.span.start, result.span.end)
+        sub_entries.append(f"[{ts}] :: {text}")
 
-    patched = lines[: insert_after + 1] + sub_entries + lines[insert_after + 1 :]
+    patched = lines[:insert_after] + sub_entries + lines[insert_after + 1 :]
     mapping_path.write_text("\n".join(patched) + "\n", encoding="utf-8")

@@ -279,35 +279,6 @@ def run(
                 affected_timestamp=affected_timestamp,
                 session=session,
             )
-            # Der Sub-Entry zeigt den Vers-Anfang (verse_text[0:span.end]).
-            # Der noch nicht abgedeckte Suffix (verse_text[span.end:]) wird als
-            # Fortsetzung in den circle_window-Eintrag der Gruppe geschrieben.
-            last_span_end = session.results[-1].span.end
-            continuation = session.mapping_text[last_span_end:].strip()
-            first_sub_ts = seconds_to_timestamp(
-                session.results[0].chunk.window.start_sec
-            )
-            first_verse_num = group.verses[0][0]
-            file_lines = mapping_path.read_text(encoding="utf-8").splitlines()
-            verse_num_prepended = False
-            cleaned: list = []
-            for file_line in file_lines:
-                if file_line.startswith(f"[{group.mapping_ts}]"):
-                    # Eintrag durch Fortsetzungstext ersetzen (oder entfernen wenn leer)
-                    if continuation:
-                        cleaned.append(f"[{group.mapping_ts}] :: {continuation}")
-                    continue
-                if not verse_num_prepended and file_line.startswith(
-                    f"[{first_sub_ts}]"
-                ):
-                    file_line = file_line.replace(
-                        f"[{first_sub_ts}] :: ",
-                        f"[{first_sub_ts}] :: {first_verse_num}: ",
-                        1,
-                    )
-                    verse_num_prepended = True
-                cleaned.append(file_line)
-            mapping_path.write_text("\n".join(cleaned) + "\n", encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------

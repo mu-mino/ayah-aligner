@@ -27,20 +27,6 @@ import spacy
 import regex
 
 from modules.whispertranscribe import ChunkTranscription
-from sentence_transformers import SentenceTransformer, util
-
-
-from pathlib import Path
-from sentence_transformers import SentenceTransformer
-
-model_path = Path(
-    "/home/muhammed-emin-eser/desk/din/ayah-aligner/symanto-model"
-).resolve()
-
-# local_files_only=True zwingt das Skript, komplett offline zu arbeiten
-model = SentenceTransformer(
-    model_path.as_posix(), local_files_only=True
-)  # Scoring helpers
 # ---------------------------------------------------------------------------
 
 
@@ -360,6 +346,10 @@ def _fill_gaps(results: List[MatchResult], verse_text: str) -> None:
     Füllt den Prefix-Bereich vor dem ersten Span, Lücken zwischen Spans und
     den Suffix nach dem letzten Span.
     Modifiziert results in-place.
+
+    Stabile deterministische Implementierung: Span-Grenzen werden immer
+    vorwärts ausgedehnt (prev → curr). Keine Embedding-basierte Entscheidung,
+    da diese bei Vers-Grenzen zu falscher Zuordnung und Datenverlust führen kann.
     """
     if not results:
         return
@@ -376,38 +366,15 @@ def _fill_gaps(results: List[MatchResult], verse_text: str) -> None:
         prev = by_start[i - 1]
         curr = by_start[i]
         if verse_text[prev.span.end : curr.span.start].strip():
-            english_gap_text = verse_text[prev.span.end : curr.span.start].strip()
-            arabic_text_prev = prev.chunk.raw_text
-            arabic_text_curr = curr.chunk.raw_text
-
-            # Embeddings (Vektoren) für die Texte generieren
-            emb_english = model.encode(english_gap_text, convert_to_tensor=True)
-            emb_prev = model.encode(arabic_text_prev, convert_to_tensor=True)
-            emb_curr = model.encode(arabic_text_curr, convert_to_tensor=True)
-
-            # Ähnlichkeit berechnen
-            score_prev = util.cos_sim(emb_english, emb_prev).item()
-            score_curr = util.cos_sim(emb_english, emb_curr).item()
-
-            # --- DECISION MAKING (ENTSCHEIDUNG) ---
-            if score_prev > score_curr:
-                prev.span.end = curr.span.start
-                prev.span.text = verse_text[prev.span.start : prev.span.end]
-            else:
-                curr.span.start = prev.span.end
-                curr.span.text = verse_text[curr.span.start : curr.span.end]
+            # Deterministisch: prev wird vorwärts ausgedehnt
+            prev.span.end = curr.span.start
+            prev.span.text = verse_text[prev.span.start : prev.span.end]
 
             # --- SATZZEICHEN-KORREKTUR (Waisen-Zeichen verhindern) ---
-            # Regex erfasst alle gängigen Satzzeichen und Symbole (auch ASS-Tags falls nötig, hier primär Interpunktion)
-            # r"^[^\w\s]" matcht: Wenn das allererste Zeichen KEIN Buchstabe/Zahl (\w) und KEIN Leerzeichen (\s) ist.
             if curr.span.text and re.match(r"^[^\w\s]", curr.span.text.strip()):
                 symbol = curr.span.text[0]
-
-                # curr kürzen
                 curr.span.text = curr.span.text[1:]
                 curr.span.start += 1
-
-                # prev erweitern
                 prev.span.text = prev.span.text + symbol
                 prev.span.end += 1
 
@@ -651,5 +618,5 @@ def patch_circlelog(
         text = _format_span_with_verse_ids(session, result.span.start, result.span.end)
         sub_entries.append(f"[{ts}] :: {text}")
 
-    patched = lines[:insert_after] + sub_entries + lines[insert_after + 1 :]
+    patched = lines[: insert_after + 1] + sub_entries + lines[insert_after + 1 :]
     mapping_path.write_text("\n".join(patched) + "\n", encoding="utf-8")

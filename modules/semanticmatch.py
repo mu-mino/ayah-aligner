@@ -27,6 +27,17 @@ import spacy
 import regex
 
 from modules.whispertranscribe import ChunkTranscription
+from sentence_transformers import SentenceTransformer, util
+
+from pathlib import Path
+
+_model_path = Path(
+    "/home/muhammed-emin-eser/desk/din/ayah-aligner/symanto-model"
+).resolve()
+
+model = SentenceTransformer(
+    _model_path.as_posix(), local_files_only=True
+)
 # ---------------------------------------------------------------------------
 
 
@@ -347,9 +358,8 @@ def _fill_gaps(results: List[MatchResult], verse_text: str) -> None:
     den Suffix nach dem letzten Span.
     Modifiziert results in-place.
 
-    Stabile deterministische Implementierung: Span-Grenzen werden immer
-    vorwärts ausgedehnt (prev → curr). Keine Embedding-basierte Entscheidung,
-    da diese bei Vers-Grenzen zu falscher Zuordnung und Datenverlust führen kann.
+    Primäre Entscheidung per Embedding-Cosinus-Ähnlichkeit, gefolgt von
+    einer deterministischen Vorwärts-Ausdehnung als Sicherheitsnetz.
     """
     if not results:
         return
@@ -366,9 +376,25 @@ def _fill_gaps(results: List[MatchResult], verse_text: str) -> None:
         prev = by_start[i - 1]
         curr = by_start[i]
         if verse_text[prev.span.end : curr.span.start].strip():
-            # Deterministisch: prev wird vorwärts ausgedehnt
-            prev.span.end = curr.span.start
-            prev.span.text = verse_text[prev.span.start : prev.span.end]
+            english_gap_text = verse_text[prev.span.end : curr.span.start].strip()
+            arabic_text_prev = prev.chunk.raw_text
+            arabic_text_curr = curr.chunk.raw_text
+
+            # Embeddings (Vektoren) für die Texte generieren
+            emb_english = model.encode(english_gap_text, convert_to_tensor=True)
+            emb_prev = model.encode(arabic_text_prev, convert_to_tensor=True)
+            emb_curr = model.encode(arabic_text_curr, convert_to_tensor=True)
+
+            # Ähnlichkeit berechnen
+            score_prev = util.cos_sim(emb_english, emb_prev).item()
+            score_curr = util.cos_sim(emb_english, emb_curr).item()
+
+            if score_prev > score_curr:
+                prev.span.end = curr.span.start
+                prev.span.text = verse_text[prev.span.start : prev.span.end]
+            else:
+                curr.span.start = prev.span.end
+                curr.span.text = verse_text[curr.span.start : curr.span.end]
 
             # --- SATZZEICHEN-KORREKTUR (Waisen-Zeichen verhindern) ---
             if curr.span.text and re.match(r"^[^\w\s]", curr.span.text.strip()):
@@ -377,6 +403,14 @@ def _fill_gaps(results: List[MatchResult], verse_text: str) -> None:
                 curr.span.start += 1
                 prev.span.text = prev.span.text + symbol
                 prev.span.end += 1
+
+    # Sicherheit: deterministische Vorwärts-Ausdehnung für verbleibende Lücken
+    for i in range(1, len(by_start)):
+        prev = by_start[i - 1]
+        curr = by_start[i]
+        if prev.span.end < curr.span.start:
+            prev.span.end = curr.span.start
+            prev.span.text = verse_text[prev.span.start : prev.span.end]
 
     last = by_start[-1]
     if last.span.end < len(verse_text) and verse_text[last.span.end :].strip():

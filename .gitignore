@@ -1,4 +1,5 @@
 symanto-model/
+qwen_batch_req.py
 output/
 tmp/
 tests/

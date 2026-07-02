@@ -252,7 +252,6 @@ def run(
     groups_with_subs = [g for g in groups if g.sub_windows]
     if not groups_with_subs:
         return
-    write_vars(globals(), locals())
     whisper_model = load_model(device=whisper_device)
 
     for idx, group in enumerate(groups):

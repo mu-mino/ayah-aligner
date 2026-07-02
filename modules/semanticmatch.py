@@ -29,6 +29,9 @@ import regex
 from modules.whispertranscribe import ChunkTranscription
 from sentence_transformers import SentenceTransformer, util
 
+from camel_tools.morphology.database import MorphologyDB
+from camel_tools.morphology.analyzer import Analyzer
+
 from pathlib import Path
 
 _model_path = Path(
@@ -119,6 +122,33 @@ def _normalize_arabic(text: str) -> str:
 QURAN_API_BASE: str = "https://api.quran.com/api/v4"
 QURAN_TRANSLATION_ID: int = 203  # Al-Hilali & Khan
 WORD_MATCH_TOLERANCE: float = 0.5
+
+# CAMeL Tools Arabic-Stem-Cache
+_stem_cache: dict[str, set] = {}
+_analyzer = None
+
+
+def _init_ar_analyzer():
+    global _analyzer
+    if _analyzer is None:
+        db = MorphologyDB.builtin_db()
+        _analyzer = Analyzer(db)
+    return _analyzer
+
+
+def _get_stems(word: str) -> set:
+    if word not in _stem_cache:
+        analyzer = _init_ar_analyzer()
+        analyses = analyzer.analyze(word)
+        stems: set = set()
+        for a in analyses:
+            stem = a.get("stem")
+            if stem:
+                stem = _normalize_arabic(stem)
+                stems.add(stem)
+        _stem_cache[word] = stems
+    return _stem_cache[word]
+
 
 _CACHE_DIR: Path = Path(__file__).resolve().parent.parent / "data" / "api"
 
@@ -244,8 +274,24 @@ def _word_to_translation(arabic_word: str, verse_words: list) -> str:
     """
     Findet das beste Match für ein arabisches Wort in der Vers-Wortliste und
     gibt dessen englische Übersetzung zurück.
+
+    1. Pass: exakter Stem-Match (CAMeL Tools) – erster Treffer gewinnt.
+    2. Pass: SequenceMatcher-Fallback auf normalisiertem Vollwort.
     Wirft ValueError wenn kein Match >= WORD_MATCH_TOLERANCE gefunden wird.
     """
+    chunk_stems = _get_stems(arabic_word)
+
+    # Phase 1: exakter Stem-Match – erster Treffer gewinnt
+    for w in verse_words:
+        verse_stems = _get_stems(w["text_uthmani"])
+        if chunk_stems & verse_stems:
+            t = w.get("translation", {})
+            text = t.get("text", "") if isinstance(t, dict) else ""
+            if re.match(r"^\(\d+\)$", text.strip()):
+                return ""
+            return text.strip()
+
+    # Phase 2: SequenceMatcher-Fallback auf normalisiertem Vollwort
     norm_word = _normalize_arabic(arabic_word)
     best_score = 0.0
     best_match = None
@@ -558,7 +604,8 @@ def run_matching(
         return session
 
     verse_words = []
-    for ayah in dict_of_verses:
+    ayahs = sorted(dict_of_verses.keys())
+    for ayah in ayahs:
         verse_words.extend(_fetch_verse_words(surah, ayah))
 
     for chunk in chunks:

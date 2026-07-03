@@ -33,14 +33,11 @@ from camel_tools.morphology.database import MorphologyDB
 from camel_tools.morphology.analyzer import Analyzer
 
 from pathlib import Path
+import os
 
-_model_path = Path(
-    "/home/muhammed-emin-eser/desk/din/ayah-aligner/symanto-model"
-).resolve()
+os.environ["HF_HUB_OFFLINE"] = "1"
+model = SentenceTransformer("symanto/sn-xlm-roberta-base-snli-mnli-anli-xnli")
 
-model = SentenceTransformer(
-    _model_path.as_posix(), local_files_only=True
-)
 # ---------------------------------------------------------------------------
 
 
@@ -121,34 +118,7 @@ def _normalize_arabic(text: str) -> str:
 
 QURAN_API_BASE: str = "https://api.quran.com/api/v4"
 QURAN_TRANSLATION_ID: int = 203  # Al-Hilali & Khan
-WORD_MATCH_TOLERANCE: float = 0.5
-
-# CAMeL Tools Arabic-Stem-Cache
-_stem_cache: dict[str, set] = {}
-_analyzer = None
-
-
-def _init_ar_analyzer():
-    global _analyzer
-    if _analyzer is None:
-        db = MorphologyDB.builtin_db()
-        _analyzer = Analyzer(db)
-    return _analyzer
-
-
-def _get_stems(word: str) -> set:
-    if word not in _stem_cache:
-        analyzer = _init_ar_analyzer()
-        analyses = analyzer.analyze(word)
-        stems: set = set()
-        for a in analyses:
-            stem = a.get("stem")
-            if stem:
-                stem = _normalize_arabic(stem)
-                stems.add(stem)
-        _stem_cache[word] = stems
-    return _stem_cache[word]
-
+WORD_MATCH_TOLERANCE: float = 0.7
 
 _CACHE_DIR: Path = Path(__file__).resolve().parent.parent / "data" / "api"
 
@@ -270,49 +240,71 @@ def _fetch_verse_words(surah: int, ayah: int) -> list:
     return words
 
 
-def _word_to_translation(arabic_word: str, verse_words: list) -> str:
+def _word_to_translation(
+    arabic_word: str, verse_words: list
+) -> Tuple[str, int]:
     """
     Findet das beste Match für ein arabisches Wort in der Vers-Wortliste und
-    gibt dessen englische Übersetzung zurück.
-
-    1. Pass: exakter Stem-Match (CAMeL Tools) – erster Treffer gewinnt.
-    2. Pass: SequenceMatcher-Fallback auf normalisiertem Vollwort.
-    Wirft ValueError wenn kein Match >= WORD_MATCH_TOLERANCE gefunden wird.
+    gibt (englische Übersetzung, Index in verse_words) zurück.
+    Bei unzureichendem Match (Score < WORD_MATCH_TOLERANCE) wird ("", -1) zurückgegeben;
+    _fill_gaps deckt die Lücke später ab.
     """
-    chunk_stems = _get_stems(arabic_word)
-
-    # Phase 1: exakter Stem-Match – erster Treffer gewinnt
-    for w in verse_words:
-        verse_stems = _get_stems(w["text_uthmani"])
-        if chunk_stems & verse_stems:
-            t = w.get("translation", {})
-            text = t.get("text", "") if isinstance(t, dict) else ""
-            if re.match(r"^\(\d+\)$", text.strip()):
-                return ""
-            return text.strip()
-
-    # Phase 2: SequenceMatcher-Fallback auf normalisiertem Vollwort
     norm_word = _normalize_arabic(arabic_word)
     best_score = 0.0
+    best_idx = -1
     best_match = None
 
-    for w in verse_words:
+    for idx, w in enumerate(verse_words):
         norm_verse = _normalize_arabic(w["text_uthmani"])
         score = SequenceMatcher(None, norm_word, norm_verse).ratio()
         if score > best_score:
             best_score = score
+            best_idx = idx
             best_match = w
 
     if best_score < WORD_MATCH_TOLERANCE or best_match is None:
-        raise ValueError(
-            f"Kein Match für '{arabic_word}' (bestes: {best_score:.2f}, Schwelle: {WORD_MATCH_TOLERANCE})"
-        )
+        return ("", -1)
 
     t = best_match.get("translation", {})
     text = t.get("text", "") if isinstance(t, dict) else ""
-    if re.match(r"^\(\d+\)$", text.strip()):
-        return ""
-    return text.strip()
+    return (text.strip(), best_idx)
+
+
+def _fix_monotonic_indices(
+    matched: List[Tuple[str, int]], verse_words: list
+) -> List[Tuple[str, int]]:
+    """
+    Korrigiert die gematchten Indices pro Chunk auf einen monoton steigenden
+    Durchlauf: jeder Index >= dem vorherigen.
+    Ausreisser (zurückfallende Indices durch wiederholte Wörter) werden durch
+    den nächsthöheren Index aus der Lookup-Tabelle ersetzt.
+    """
+    from collections import defaultdict
+
+    lookup: dict[str, list[int]] = defaultdict(list)
+    for idx, vw in enumerate(verse_words):
+        lookup[_normalize_arabic(vw["text_uthmani"])].append(idx)
+
+    corrected = []
+    last_valid = -1
+    for word, orig_idx in matched:
+        if orig_idx >= last_valid:
+            corrected.append((word, orig_idx))
+            last_valid = orig_idx
+        else:
+            candidates = [
+                i
+                for i in lookup.get(_normalize_arabic(word), [])
+                if i > last_valid
+            ]
+            if candidates:
+                new_idx = min(candidates)
+                corrected.append((word, new_idx))
+                last_valid = new_idx
+            else:
+                corrected.append((word, orig_idx))
+                last_valid = max(last_valid, orig_idx)
+    return corrected
 
 
 nlp = spacy.blank("en")
@@ -604,17 +596,26 @@ def run_matching(
         return session
 
     verse_words = []
-    ayahs = sorted(dict_of_verses.keys())
-    for ayah in ayahs:
+    for ayah in dict_of_verses:
         verse_words.extend(_fetch_verse_words(surah, ayah))
 
     for chunk in chunks:
         translations = []
         text = chunk.raw_text.split()
+        matched_pairs: List[Tuple[str, int]] = []
         for txt in text:
-            translation = _word_to_translation(txt, verse_words)
+            translation, idx = _word_to_translation(txt, verse_words)
+            matched_pairs.append((txt, idx))
             if translation:
                 translations.append(translation)
+
+        matched_pairs = _fix_monotonic_indices(matched_pairs, verse_words)
+        translations = []
+        for _, idx in matched_pairs:
+            if idx >= 0:
+                t = verse_words[idx].get("translation", {})
+                text_val = t.get("text", "") if isinstance(t, dict) else ""
+                translations.append(text_val.strip())
 
         query = " ".join(translations)
         char_start, char_end, span_text, score = find_semantic_span(

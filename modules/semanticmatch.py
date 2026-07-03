@@ -173,8 +173,8 @@ class GuardReport:
 class MatchSession:
     """Gesamtergebnis einer Matching-Sitzung für einen Vers."""
 
-    mapping_text: str
-    verse_ranges: List[Tuple[int, int, int, str]] = field(default_factory=list)
+    verse_text: str
+    ayah: int = 0
     results: List[MatchResult] = field(default_factory=list)
     guard: Optional[GuardReport] = None
 
@@ -184,24 +184,41 @@ class MatchSession:
 # ---------------------------------------------------------------------------
 
 
-def mapping_to_per_verse(mapping_line: str) -> Optional[dict]:
-    mapping_stamp = re.match(
-        r"^\[\d{2}:\d{2}:\d{2}\]\s*::\s*(.*)$", mapping_line.strip()
-    )
-    if not mapping_stamp:
-        return {}
+def extract_verse_text(mapping_line: str) -> str:
+    """
+    Extrahiert den Vers-Text aus einem mapping_line-Eintrag.
+    Z.B. '[00:00:10] :: 98:1 Text here 98:2 More text' -> 'Text here More text'
+         '[00:00:10] :: 1: Text here' -> 'Text here'
+    """
+    m = re.match(r"^\[\d{2}:\d{2}:\d{2}\]\s*::\s*(.*)$", mapping_line.strip())
+    if not m:
+        return ""
+    content = m.group(1)
+    # Entferne 'surah:verse'-Marker (98:1) und dann 'verse:'-Marker (1:)
+    text = re.sub(r"\d+:\d+\s*", "", content)
+    text = re.sub(r"\b\d+:\s*", "", text)
+    return text.strip()
 
-    content = mapping_stamp.group(1)
-    verse_markers = list(re.finditer(r"(?:^|\s)(\d+):\s*", content))
-    res = {}
-    for index, marker in enumerate(verse_markers):
-        next_marker = (
-            verse_markers[index + 1] if index + 1 < len(verse_markers) else None
-        )
-        start = marker.end()
-        end = next_marker.start() if next_marker else len(content)
-        res[int(marker.group(1))] = content[start:end].strip()
-    return res
+
+def extract_verse_number(mapping_line: str) -> int:
+    """
+    Extrahiert die erste Vers-Nummer aus einem mapping_line-Eintrag.
+    Z.B. '[00:00:10] :: 98:1 Text here' -> 1
+         '[00:00:10] :: 1: Text here' -> 1
+    """
+    m = re.match(r"^\[\d{2}:\d{2}:\d{2}\]\s*::\s*(.*)$", mapping_line.strip())
+    if not m:
+        return 0
+    content = m.group(1)
+    # Form: "surah:verse" → z.B. "98:1"
+    pair = re.search(r"(\d+):(\d+)\b", content)
+    if pair:
+        return int(pair.group(2))
+    # Form: "verse:" → z.B. "1:"
+    alone = re.search(r"(\d+):", content)
+    if alone:
+        return int(alone.group(1))
+    return 0
 
 
 # ---------------------------------------------------------------------------
@@ -450,12 +467,6 @@ def _fill_gaps(results: List[MatchResult], verse_text: str) -> None:
             prev.span.end = curr.span.start
             prev.span.text = verse_text[prev.span.start : prev.span.end]
 
-    last = by_start[-1]
-    if last.span.end < len(verse_text) and verse_text[last.span.end :].strip():
-        last.span.end = len(verse_text)
-        last.span.text = verse_text[last.span.start : last.span.end]
-
-
 # ---------------------------------------------------------------------------
 # Guard
 # ---------------------------------------------------------------------------
@@ -562,52 +573,27 @@ def run_guard(results: List[MatchResult], verse_text: str) -> GuardReport:
 
 def run_matching(
     chunks: List[ChunkTranscription],
-    dict_of_verses: dict,
+    verse_text: str,
     surah: int,
+    ayah: int,
 ) -> MatchSession:
     """
     Matcht jeden arabischen Chunk gegen den englischen Vers-Text via quran.com API.
-
-    Ablauf pro Chunk:
-        1. quran.com liefert wortgenaues Alignment für surah:ayah
-        2. Arabischen Chunk gegen Vers-Wörter matchen → Positionen [i, j]
-        3. Wort-Übersetzungen [i..j] konkatenieren → Query
-        4. SequenceMatcher findet besten Substring-Match in verse_text
     """
-    mapping_parts = []
-    verse_ranges: List[Tuple[int, int, int, str]] = []
-    cursor = 0
-    for ayah, verse_text in dict_of_verses.items():
-        if mapping_parts:
-            cursor += 1
-        start = cursor
-        mapping_parts.append(verse_text)
-        end = start + len(verse_text)
-        verse_ranges.append((ayah, start, end, verse_text))
-        cursor = end
-
-    session = MatchSession(
-        mapping_text=" ".join(mapping_parts),
-        verse_ranges=verse_ranges,
-    )
+    session = MatchSession(verse_text=verse_text, ayah=ayah)
 
     if not chunks:
         session.guard = GuardReport(completeness_passed=True)
         return session
 
-    verse_words = []
-    for ayah in dict_of_verses:
-        verse_words.extend(_fetch_verse_words(surah, ayah))
+    verse_words = _fetch_verse_words(surah, ayah)
 
     for chunk in chunks:
-        translations = []
         text = chunk.raw_text.split()
         matched_pairs: List[Tuple[str, int]] = []
         for txt in text:
-            translation, idx = _word_to_translation(txt, verse_words)
+            _, idx = _word_to_translation(txt, verse_words)
             matched_pairs.append((txt, idx))
-            if translation:
-                translations.append(translation)
 
         matched_pairs = _fix_monotonic_indices(matched_pairs, verse_words)
         translations = []
@@ -619,7 +605,7 @@ def run_matching(
 
         query = " ".join(translations)
         char_start, char_end, span_text, score = find_semantic_span(
-            query, session.mapping_text
+            query, session.verse_text
         )
         session.results.append(
             MatchResult(
@@ -630,29 +616,14 @@ def run_matching(
             )
         )
 
-    _fill_gaps(session.results, session.mapping_text)
-    session.guard = run_guard(session.results, session.mapping_text)
+    _fill_gaps(session.results, session.verse_text)
+    session.guard = run_guard(session.results, session.verse_text)
     return session
 
 
 # ---------------------------------------------------------------------------
 # Circlelog patchen
 # ---------------------------------------------------------------------------
-
-
-def _format_span_with_verse_ids(session: MatchSession, start: int, end: int) -> str:
-    parts = []
-    for ayah, verse_start, verse_end, verse_text in session.verse_ranges:
-        overlap_start = max(start, verse_start)
-        overlap_end = min(end, verse_end)
-        if overlap_start >= overlap_end:
-            continue
-
-        text = verse_text[overlap_start - verse_start : overlap_end - verse_start]
-        if overlap_start == verse_start:
-            text = f"{ayah}: {text}"
-        parts.append(text.strip())
-    return " ".join(part for part in parts if part)
 
 
 def patch_circlelog(
@@ -662,19 +633,6 @@ def patch_circlelog(
 ) -> None:
     """
     Fügt Sub-Einträge in die Circlelog-Datei ein.
-
-    Für jeden MatchResult aus der MatchSession wird ein Sub-Eintrag erzeugt:
-        [HH:MM:SS] :: <gematchter Span-Text>
-
-    Der Timestamp stammt aus dem FrameWindow des zugehörigen Chunks
-    (window.start_sec). Die Sub-Einträge werden direkt nach dem betroffenen
-    Circlelog-Eintrag eingefügt, vor dem nächsten Eintrag.
-
-    Parameters
-    ----------
-    mapping_path       : Pfad zur Circlelog-Mapping-Datei.
-    affected_timestamp : Timestamp des betroffenen Eintrags, z. B. "00:00:10".
-    session            : MatchSession mit den Ergebnissen aus run_matching().
     """
     from modules.circlelog import seconds_to_timestamp
 
@@ -697,7 +655,7 @@ def patch_circlelog(
     sub_entries = []
     for result in session.results:
         ts = seconds_to_timestamp(result.chunk.window.start_sec)
-        text = _format_span_with_verse_ids(session, result.span.start, result.span.end)
+        text = f"{session.ayah}: {result.span.text}"
         sub_entries.append(f"[{ts}] :: {text}")
 
     patched = lines[: insert_after + 1] + sub_entries + lines[insert_after + 1 :]

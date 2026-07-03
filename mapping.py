@@ -36,7 +36,8 @@ from modules.whispertranscribe import transcribe_chunks, load_model
 from modules.semanticmatch import (
     run_matching,
     patch_circlelog,
-    mapping_to_per_verse,
+    extract_verse_text,
+    extract_verse_number,
 )
 
 BASE_DIR = Path(__file__).parent
@@ -89,11 +90,6 @@ class WindowGroup:
     verses: List[Tuple[int, str]] = field(default_factory=list)
     mapping_line: str = ""
     mapping_ts: str = ""
-
-    @property
-    def all_windows(self) -> List[FrameWindow]:
-        """Gibt das Hauptfenster und alle Sub-Fenster als eine gemeinsame Liste zurück."""
-        return [self.circle_window] + self.sub_windows
 
 
 # ---------------------------------------------------------------------------
@@ -255,24 +251,29 @@ def run(
     whisper_model = load_model(device=whisper_device)
 
     for idx, group in enumerate(groups):
-        id_verse: dict[int, str] = mapping_to_per_verse(group.mapping_line)
-        if not id_verse:
+        if not group.sub_windows:
+            continue
+        if idx + 1 >= len(groups):
             continue
 
-        all_windows = group.all_windows if group.sub_windows else [group.circle_window]
-        if idx + 1 == len(groups) - 1 and not groups[idx + 1].verses:
-            all_windows = all_windows + [groups[idx + 1].circle_window]
+        # Nächste Gruppe → deren Vers-Text ist das Target für Sub-Window-Matching
+        next_group = groups[idx + 1]
+        next_verse_text = extract_verse_text(next_group.mapping_line)
+        next_verse_num = extract_verse_number(next_group.mapping_line)
+        if not next_verse_text:
+            continue
 
         chunks = transcribe_chunks(
             video_path=audio_path,
-            windows=all_windows,
+            windows=group.sub_windows,
             model=whisper_model,
         )
 
         session = run_matching(
             chunks=chunks,
+            verse_text=next_verse_text,
             surah=surah,
-            dict_of_verses=id_verse,
+            ayah=next_verse_num,
         )
 
         if session.results:
@@ -282,6 +283,23 @@ def run(
                 affected_timestamp=affected_timestamp,
                 session=session,
             )
+
+        # Continuation: ungedeckter Suffix → nächster circle_entry
+        if session.guard and session.guard.uncovered_ranges:
+            last = session.guard.uncovered_ranges[-1]
+            if last[1] == len(next_verse_text):
+                suffix_text = next_verse_text[last[0] : last[1]].strip()
+                if suffix_text:
+                    next_ts = seconds_to_timestamp(next_group.sub_windows[-1].end_sec) if next_group.sub_windows else seconds_to_timestamp(next_group.circle_window.start_sec)
+                    suffix_line = build_verse_line(next_ts, [(next_verse_num, suffix_text)])
+                    lines = mapping_path.read_text(encoding="utf-8").splitlines()
+                    for i, line in enumerate(lines):
+                        if line.startswith(f"[{next_group.mapping_ts}]"):
+                            lines[i] = suffix_line
+                            break
+                    mapping_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+                    next_group.mapping_line = suffix_line
+                    next_group.mapping_ts = next_ts
 
 
 # ---------------------------------------------------------------------------

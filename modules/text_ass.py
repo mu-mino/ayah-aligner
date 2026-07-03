@@ -206,20 +206,32 @@ def normalize(word: str) -> str:
 # ==========================================
 # ANNOTATION ENGINE (DEINE ORIGINAL-STRUKTUR)
 # ==========================================
-def get_annotated_text(file_name: str) -> str:
-    annotated_file = Path(
-        f"/home/muhammed-emin-eser/desk/din/quran/prompts_jsonl/{file_name}.jsonl"
-    )
+def get_annotated_text(file_name: str) -> Dict:
+    m = re.match(r"^(\d+)", file_name)
+    result_path = None
+    if m:
+        suffix = m.group(1)
+        base = Path("/home/muhammed-emin-eser/desk/din/quran/qwen_final_jsonl/")
 
-    with open(
-        "/home/muhammed-emin-eser/desk/din/output_llm_tmp/result98.jsonl", "r"
-    ) as f:
+        p = base / f"{suffix}.jsonl"
+        if p.exists():
+            result_path = p
+
+    if result_path is None:
+        return {}
+
+    with open(result_path, "r") as f:
         lines = f.readlines()
     verses = {}
     for line in lines:
-        line = json.loads(line)
-        verses[int(line["custom_id"])] = json.loads(
-            line["response"]["body"]["choices"][0]["message"]["content"]
+        parsed = json.loads(line)
+        cid = parsed["custom_id"]
+        if ":" in cid:
+            verse_num = int(cid.split(":")[-1])
+        else:
+            verse_num = int(cid)
+        verses[verse_num] = json.loads(
+            parsed["response"]["body"]["choices"][0]["message"]["content"]
         )
     return verses
 

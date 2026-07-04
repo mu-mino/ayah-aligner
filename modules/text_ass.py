@@ -230,9 +230,12 @@ def get_annotated_text(file_name: str) -> Dict:
             verse_num = int(cid.split(":")[-1])
         else:
             verse_num = int(cid)
-        verses[verse_num] = json.loads(
-            parsed["response"]["body"]["choices"][0]["message"]["content"]
-        )
+        try:
+            verses[verse_num] = json.loads(
+                parsed["response"]["body"]["choices"][0]["message"]["content"]
+            )
+        except json.JSONDecodeError:
+            print(f"  [WARN] Malformed JSON for verse {verse_num}, skipping")
     return verses
 
 

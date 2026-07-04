@@ -242,6 +242,19 @@ def run_llama(verse, file_name, verse_idx):
                         "content": f"VERSE:\n'{verse[1]}'\n\n",
                     },
                 ],
+                "response_format": {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "verse_annotations",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string",
+                                "enum": ["GOD", "DESTRUCTIVE", "CONSTRUCTIVE", "NONE"]
+                            },
+                        },
+                    },
+                },
             },
         }
         with open(

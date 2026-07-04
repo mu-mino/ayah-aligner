@@ -507,14 +507,17 @@ def main(argv: Optional[List[str]] = None):
         raise RuntimeError("Keine gültigen Zeilen gefunden.")
 
     segments = {}
-    segments_path = args.mapping.with_suffix(".segments")
-    if segments_path.exists():
-        for line in segments_path.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            item = json.loads(line)
-            segments[item["ts"]] = (item["start"], item["end"])
+    try:
+        segments_path = args.mapping.with_suffix(".segments")
+        if segments_path.exists():
+            for line in segments_path.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                item = json.loads(line)
+                segments[item["ts"]] = (item["start"], item["end"])
+    except Exception:
+        pass
 
     ass_text = build_ass(file_name, entries, width, height, duration, segments=segments)
     args.output.write_text(ass_text, encoding="utf-8")

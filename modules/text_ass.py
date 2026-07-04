@@ -390,10 +390,22 @@ def build_ass(
             end = start + 0.25
 
         # LLM-basierte Annotation & Formatierungen anwenden
-        semantic_content: Dict = (
-            semantic_indexes[i] if semantic_indexes.get(i, False) else {}
-        )
-        semantic_content = {int(k): v for k, v in semantic_content.items()}
+        semantic_content: Dict = {}
+        tokens = e.text.split()
+        verse_nums = set()
+        for t in tokens:
+            m = re.match(r"^(\d+):$", t)
+            if m:
+                verse_nums.add(int(m.group(1)))
+        for vn in verse_nums:
+            ann = semantic_indexes.get(vn, {})
+            if not ann:
+                continue
+            prefix = f"{vn}:"
+            if prefix in tokens:
+                offset = tokens.index(prefix)
+                for k, v in ann.items():
+                    semantic_content[int(k) + offset] = v
 
         highlighted = annotate_highlights(e.text, semantic_content)
         txt = wrap_ass_text(highlighted if highlighted else e.text, width, font_size)

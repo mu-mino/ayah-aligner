@@ -187,38 +187,20 @@ class MatchSession:
 def extract_verse_text(mapping_line: str) -> str:
     """
     Extrahiert den Vers-Text aus einem mapping_line-Eintrag.
-    Z.B. '[00:00:10] :: 98:1 Text here 98:2 More text' -> 'Text here More text'
-         '[00:00:10] :: 1: Text here' -> 'Text here'
+    Entfernt NUR die erste Versnummer, damit '32:'/'33:' als Text erhalten bleiben.
     """
     m = re.match(r"^\[\d{2}:\d{2}:\d{2}\]\s*::\s*(.*)$", mapping_line.strip())
     if not m:
         return ""
     content = m.group(1)
-    # Entferne 'surah:verse'-Marker (98:1) und dann 'verse:'-Marker (1:)
-    text = re.sub(r"\d+:\d+\s*", "", content)
-    text = re.sub(r"\b\d+:\s*", "", text)
+    text = re.sub(r"^\d+:\s*", "", content, count=1)
     return text.strip()
 
 
-def extract_verse_number(mapping_line: str) -> int:
-    """
-    Extrahiert die erste Vers-Nummer aus einem mapping_line-Eintrag.
-    Z.B. '[00:00:10] :: 98:1 Text here' -> 1
-         '[00:00:10] :: 1: Text here' -> 1
-    """
-    m = re.match(r"^\[\d{2}:\d{2}:\d{2}\]\s*::\s*(.*)$", mapping_line.strip())
-    if not m:
-        return 0
-    content = m.group(1)
-    # Form: "surah:verse" → z.B. "98:1"
-    pair = re.search(r"(\d+):(\d+)\b", content)
-    if pair:
-        return int(pair.group(2))
-    # Form: "verse:" → z.B. "1:"
-    alone = re.search(r"(\d+):", content)
-    if alone:
-        return int(alone.group(1))
-    return 0
+def extract_verse_number(mapping_line: str) -> Optional[int]:
+    """Extrahiert die erste Vers-Nummer aus einem mapping_line-Eintrag."""
+    m = re.match(r"^\[\d{2}:\d{2}:\d{2}\]\s*::\s*(\d+):", mapping_line.strip())
+    return int(m.group(1)) if m else None
 
 
 # ---------------------------------------------------------------------------

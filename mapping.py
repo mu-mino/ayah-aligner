@@ -260,7 +260,7 @@ def run(
         next_group = groups[idx + 1]
         next_verse_text = extract_verse_text(next_group.mapping_line)
         next_verse_num = extract_verse_number(next_group.mapping_line)
-        if not next_verse_text:
+        if not next_verse_text or next_verse_num is None:
             continue
 
         chunks = transcribe_chunks(
@@ -283,23 +283,34 @@ def run(
                 affected_timestamp=affected_timestamp,
                 session=session,
             )
-
-        # Continuation: ungedeckter Suffix → nächster circle_entry
-        if session.guard and session.guard.uncovered_ranges:
-            last = session.guard.uncovered_ranges[-1]
-            if last[1] == len(next_verse_text):
-                suffix_text = next_verse_text[last[0] : last[1]].strip()
-                if suffix_text:
-                    next_ts = seconds_to_timestamp(next_group.sub_windows[-1].end_sec) if next_group.sub_windows else seconds_to_timestamp(next_group.circle_window.start_sec)
-                    suffix_line = build_verse_line(next_ts, [(next_verse_num, suffix_text)])
-                    lines = mapping_path.read_text(encoding="utf-8").splitlines()
-                    for i, line in enumerate(lines):
-                        if line.startswith(f"[{next_group.mapping_ts}]"):
-                            lines[i] = suffix_line
-                            break
-                    mapping_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-                    next_group.mapping_line = suffix_line
-                    next_group.mapping_ts = next_ts
+            # continuation: ungedeckter suffix → circle_entry der nächsten gruppe
+            last_span_end = session.results[-1].span.end
+            continuation = session.verse_text[last_span_end:].strip()
+            first_sub_ts = seconds_to_timestamp(
+                session.results[0].chunk.window.start_sec
+            )
+            first_verse_num = next_group.verses[0][0]
+            file_lines = mapping_path.read_text(encoding="utf-8").splitlines()
+            verse_num_prepended = False
+            cleaned: list = []
+            for file_line in file_lines:
+                if file_line.startswith(f"[{next_group.mapping_ts}]"):
+                    if continuation:
+                        cleaned.append(
+                            f"[{next_group.mapping_ts}] :: {continuation}"
+                        )
+                    continue
+                if not verse_num_prepended and file_line.startswith(
+                    f"[{first_sub_ts}]"
+                ):
+                    file_line = file_line.replace(
+                        f"[{first_sub_ts}] :: ",
+                        f"[{first_sub_ts}] :: {first_verse_num}: ",
+                        1,
+                    )
+                    verse_num_prepended = True
+                cleaned.append(file_line)
+            mapping_path.write_text("\n".join(cleaned) + "\n", encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------

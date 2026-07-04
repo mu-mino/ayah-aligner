@@ -33,7 +33,12 @@ from modules.circlelog import (
     seconds_to_timestamp,
     write_mapping,
 )
-from modules.whispertranscribe import transcribe_chunks, load_model
+from modules.whispertranscribe import (
+    transcribe_chunks,
+    load_model,
+    _extract_audio_chunk,
+    AUDIO_SAMPLE_RATE,
+)
 from modules.semanticmatch import (
     run_matching,
     patch_circlelog,
@@ -99,6 +104,44 @@ class WindowGroup:
 
 
 
+
+
+def _transcribe_segments(
+    audio_path: Path,
+    window: FrameWindow,
+    model,
+) -> List[Tuple[float, float]]:
+    """Separate Whisper-Transkription nur für Segment-Grenzen.
+
+    Extrahiert Audio ohne Stille-Padding und ohne Pausen-Kompression,
+    verwendet feinere VAD-Schwelle und word_timestamps=True.
+    Die bestehende Pipeline (transcribe_chunks) bleibt unverändert.
+    """
+    import tempfile
+    import whisperx
+
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+        tmp_path = Path(tmp.name)
+    try:
+        _extract_audio_chunk(audio_path, window.start_sec, window.end_sec, tmp_path)
+        audio = whisperx.load_audio(str(tmp_path))
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+    result = model.transcribe(
+        audio,
+        language="ar",
+        word_timestamps=True,
+        vad_options={"min_silence_duration_ms": 400},
+    )
+
+    offset = window.start_sec
+    segments = []
+    for seg in result.get("segments", []):
+        start = seg["start"] + offset
+        end = seg["end"] + offset
+        segments.append((round(start, 3), round(end, 3)))
+    return segments
 
 
 def _load_gray(video_path: Path, window: FrameWindow):
@@ -247,26 +290,18 @@ def run(
     write_mapping(mapping_lines, mapping_path)
 
     # ------------------------------------------------------------------
-    # 4. Whisper segments for ALL groups (optional, doesn't affect mapping)
+    # 4. Whisper segments for ALL groups (separate feine Schicht)
     # ------------------------------------------------------------------
     whisper_model = load_model(device=whisper_device)
 
-    all_segments = []
-    for idx, group in enumerate(groups):
-        chunks = transcribe_chunks(
-            video_path=audio_path,
-            windows=[group.circle_window],
-            model=whisper_model,
-        )
-        for chunk in chunks:
-            for seg in chunk.segments:
-                all_segments.append((round(seg.start, 3), round(seg.end, 3)))
-
     segments_path = mapping_path.with_suffix(".segments")
     segments_path.parent.mkdir(parents=True, exist_ok=True)
+
     with open(segments_path, "w") as f:
-        for start, end in all_segments:
-            f.write(json.dumps({"start": start, "end": end}) + "\n")
+        for group in groups:
+            segs = _transcribe_segments(audio_path, group.circle_window, whisper_model)
+            for start, end in segs:
+                f.write(json.dumps({"start": start, "end": end}) + "\n")
 
     # ------------------------------------------------------------------
     # 5. Sub-Fenster transkribieren + matchen + Mapping patchen

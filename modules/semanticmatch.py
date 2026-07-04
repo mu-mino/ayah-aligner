@@ -653,9 +653,13 @@ def patch_circlelog(
         )
 
     sub_entries = []
+    seen = set()
     for result in session.results:
         ts = seconds_to_timestamp(result.chunk.window.start_sec)
         text = f"{result.span.text}"
+        if text in seen:
+            continue
+        seen.add(text)
         sub_entries.append(f"[{ts}] :: {text}")
 
     patched = lines[: insert_after + 1] + sub_entries + lines[insert_after + 1 :]

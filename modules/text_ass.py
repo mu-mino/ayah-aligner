@@ -397,7 +397,8 @@ def build_ass(
         if end <= start:
             end = start + 0.25
 
-        # segments sidecar — präzise whisper-zeitstempel
+        # segments sidecar — präzise whisper-zeitstempel + scale-animation
+        seg_scale_tags = ""
         if segments and not only_header:
             ts = seconds_to_timestamp(start)
             if ts in segments:
@@ -405,6 +406,14 @@ def build_ass(
                 start = seg_start
                 if seg_end < end:
                     end = seg_end
+                dur_ms = int((end - start) * 1000)
+                if dur_ms > 0:
+                    rise = min(400, dur_ms // 4)
+                    fall = min(400, dur_ms // 4)
+                    seg_scale_tags = (
+                        rf"\t(0,{rise},\fscx(106)\fscy(106))"
+                        rf"\t({dur_ms - fall},{dur_ms},\fscx(100)\fscy(100))"
+                    )
 
         # LLM-basierte Annotation & Formatierungen anwenden
         semantic_content: Dict = {}
@@ -443,7 +452,7 @@ def build_ass(
 
         line_count = txt.count(r"\N") + 1
         y_adjusted = y + (line_height // 2 if line_count >= 5 else 0)
-        tags = rf"\an5\pos({x},{y_adjusted})\fad(120,150)\bord1\blur0"
+        tags = rf"\an5\pos({x},{y_adjusted})\fad(120,150)\bord1\blur0{seg_scale_tags}"
         events.append(
             f"Dialogue: 0,{sec_to_ass_time(start)},{sec_to_ass_time(end)},Overlay,,0,0,0,,{{{tags}}}{txt}"
         )

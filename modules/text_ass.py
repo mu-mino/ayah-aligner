@@ -397,23 +397,20 @@ def build_ass(
         if end <= start:
             end = start + 0.25
 
-        # segments sidecar — präzise whisper-zeitstempel + scale-animation
+        # segments sidecar — scale-animation für einträge mit segment-abdeckung
         seg_scale_tags = ""
         if segments and not only_header:
-            ts = seconds_to_timestamp(start)
-            if ts in segments:
-                seg_start, seg_end = segments[ts]
-                start = seg_start
-                if seg_end < end:
-                    end = seg_end
-                dur_ms = int((end - start) * 1000)
-                if dur_ms > 0:
-                    rise = min(400, dur_ms // 4)
-                    fall = min(400, dur_ms // 4)
-                    seg_scale_tags = (
-                        rf"\t(0,{rise},\fscx(106)\fscy(106))"
-                        rf"\t({dur_ms - fall},{dur_ms},\fscx(100)\fscy(100))"
-                    )
+            for seg_start, seg_end in segments:
+                if seg_start - 2.0 <= start < seg_end:
+                    dur_ms = int((end - start) * 1000)
+                    if dur_ms > 0:
+                        rise = min(400, dur_ms // 4)
+                        fall = min(400, dur_ms // 4)
+                        seg_scale_tags = (
+                            rf"\t(0,{rise},\fscx(106)\fscy(106))"
+                            rf"\t({dur_ms - fall},{dur_ms},\fscx(100)\fscy(100))"
+                        )
+                    break
 
         # LLM-basierte Annotation & Formatierungen anwenden
         semantic_content: Dict = {}
@@ -506,7 +503,7 @@ def main(argv: Optional[List[str]] = None):
     if not entries:
         raise RuntimeError("Keine gültigen Zeilen gefunden.")
 
-    segments = {}
+    segments = []
     try:
         segments_path = args.mapping.with_suffix(".segments")
         if segments_path.exists():
@@ -515,7 +512,8 @@ def main(argv: Optional[List[str]] = None):
                 if not line:
                     continue
                 item = json.loads(line)
-                segments[item["ts"]] = (item["start"], item["end"])
+                segments.append((item["start"], item["end"]))
+        segments.sort(key=lambda x: x[0])
     except Exception:
         pass
 

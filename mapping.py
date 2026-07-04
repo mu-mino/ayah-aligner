@@ -98,24 +98,7 @@ class WindowGroup:
 # ---------------------------------------------------------------------------
 
 
-def _collect_segments(session):
-    """Collect deduplicated segment data matching patch_circlelog's output."""
-    seen = set()
-    data = []
-    for result in session.results:
-        text = f"{result.span.text}"
-        if text in seen:
-            continue
-        seen.add(text)
-        ts = seconds_to_timestamp(result.chunk.window.start_sec)
-        if result.chunk.segments:
-            start = min(s.start for s in result.chunk.segments)
-            end = max(s.end for s in result.chunk.segments)
-        else:
-            start = result.chunk.window.start_sec
-            end = result.chunk.window.end_sec
-        data.append({"ts": ts, "start": round(start, 3), "end": round(end, 3)})
-    return data
+
 
 
 def _load_gray(video_path: Path, window: FrameWindow):
@@ -264,20 +247,34 @@ def run(
     write_mapping(mapping_lines, mapping_path)
 
     # ------------------------------------------------------------------
-    # 4. Sub-Fenster transkribieren + matchen + Mapping patchen
+    # 4. Whisper segments for ALL groups (optional, doesn't affect mapping)
+    # ------------------------------------------------------------------
+    whisper_model = load_model(device=whisper_device)
+
+    all_segments = []
+    for idx, group in enumerate(groups):
+        chunks = transcribe_chunks(
+            video_path=audio_path,
+            windows=[group.circle_window],
+            model=whisper_model,
+        )
+        for chunk in chunks:
+            for seg in chunk.segments:
+                all_segments.append((round(seg.start, 3), round(seg.end, 3)))
+
+    segments_path = mapping_path.with_suffix(".segments")
+    segments_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(segments_path, "w") as f:
+        for start, end in all_segments:
+            f.write(json.dumps({"start": start, "end": end}) + "\n")
+
+    # ------------------------------------------------------------------
+    # 5. Sub-Fenster transkribieren + matchen + Mapping patchen
+    #    (existing logic, only for groups with sub_windows)
     # ------------------------------------------------------------------
     groups_with_subs = [g for g in groups if g.sub_windows]
     if not groups_with_subs:
         return
-
-    try:
-        segments_path = mapping_path.with_suffix(".segments")
-        segments_path.parent.mkdir(parents=True, exist_ok=True)
-        segments_path.write_text("")
-    except Exception:
-        segments_path = None
-
-    whisper_model = load_model(device=whisper_device)
 
     for idx, group in enumerate(groups):
         if not group.sub_windows:
@@ -285,7 +282,7 @@ def run(
         if idx + 1 >= len(groups):
             continue
 
-        # Nächste Gruppe → deren Vers-Text ist das Target für Sub-Window-Matching
+        # Nächste Gruppe → deren Vers-Text ist das Target
         next_group = groups[idx + 1]
         next_verse_text = extract_verse_text(next_group.mapping_line)
         next_verse_num = extract_verse_number(next_group.mapping_line)
@@ -297,6 +294,15 @@ def run(
             windows=group.sub_windows,
             model=whisper_model,
         )
+
+        # Sub-window segments zum sidecar appenden
+        with open(segments_path, "a") as f:
+            for chunk in chunks:
+                for seg in chunk.segments:
+                    f.write(json.dumps({
+                        "start": round(seg.start, 3),
+                        "end": round(seg.end, 3),
+                    }) + "\n")
 
         session = run_matching(
             chunks=chunks,
@@ -313,14 +319,6 @@ def run(
                 session=session,
             )
 
-            # segments sidecar — präzise whisper-zeitstempel für sub-einträge
-            if segments_path is not None:
-                segments_data = _collect_segments(session)
-                if segments_data:
-                    with open(segments_path, "a") as f:
-                        for item in segments_data:
-                            f.write(json.dumps(item) + "\n")
-
             # continuation: ungedeckter suffix → circle_entry der nächsten gruppe
             last_span_end = session.results[-1].span.end
             continuation = session.verse_text[last_span_end:].strip()
@@ -334,9 +332,7 @@ def run(
             for file_line in file_lines:
                 if file_line.startswith(f"[{next_group.mapping_ts}]"):
                     if continuation:
-                        cleaned.append(
-                            f"[{next_group.mapping_ts}] :: {continuation}"
-                        )
+                        cleaned.append(f"[{next_group.mapping_ts}] :: {continuation}")
                     continue
                 if not verse_num_prepended and file_line.startswith(
                     f"[{first_sub_ts}]"

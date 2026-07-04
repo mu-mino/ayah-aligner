@@ -655,7 +655,7 @@ def patch_circlelog(
     sub_entries = []
     for result in session.results:
         ts = seconds_to_timestamp(result.chunk.window.start_sec)
-        text = f"{session.ayah}: {result.span.text}"
+        text = f"{result.span.text}"
         sub_entries.append(f"[{ts}] :: {text}")
 
     patched = lines[: insert_after + 1] + sub_entries + lines[insert_after + 1 :]

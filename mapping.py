@@ -14,6 +14,7 @@ Ablauf:
 """
 
 import argparse
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional, Tuple
@@ -95,6 +96,26 @@ class WindowGroup:
 # ---------------------------------------------------------------------------
 # Hilfsfunktion
 # ---------------------------------------------------------------------------
+
+
+def _collect_segments(session):
+    """Collect deduplicated segment data matching patch_circlelog's output."""
+    seen = set()
+    data = []
+    for result in session.results:
+        text = f"{result.span.text}"
+        if text in seen:
+            continue
+        seen.add(text)
+        ts = seconds_to_timestamp(result.chunk.window.start_sec)
+        if result.chunk.segments:
+            start = min(s.start for s in result.chunk.segments)
+            end = max(s.end for s in result.chunk.segments)
+        else:
+            start = result.chunk.window.start_sec
+            end = result.chunk.window.end_sec
+        data.append({"ts": ts, "start": round(start, 3), "end": round(end, 3)})
+    return data
 
 
 def _load_gray(video_path: Path, window: FrameWindow):
@@ -248,6 +269,10 @@ def run(
     groups_with_subs = [g for g in groups if g.sub_windows]
     if not groups_with_subs:
         return
+
+    segments_path = mapping_path.with_suffix(".segments")
+    segments_path.write_text("")
+
     whisper_model = load_model(device=whisper_device)
 
     for idx, group in enumerate(groups):
@@ -283,6 +308,14 @@ def run(
                 affected_timestamp=affected_timestamp,
                 session=session,
             )
+
+            # segments sidecar — präzise whisper-zeitstempel für sub-einträge
+            segments_data = _collect_segments(session)
+            if segments_data:
+                with open(segments_path, "a") as f:
+                    for item in segments_data:
+                        f.write(json.dumps(item) + "\n")
+
             # continuation: ungedeckter suffix → circle_entry der nächsten gruppe
             last_span_end = session.results[-1].span.end
             continuation = session.verse_text[last_span_end:].strip()

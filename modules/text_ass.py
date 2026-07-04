@@ -19,6 +19,13 @@ LLM = Llama(
 )
 
 
+def seconds_to_timestamp(seconds: float) -> str:
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    secs = int(seconds % 60)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+
+
 TS_RE = re.compile(
     r"^\[(?:(?P<h>\d{2}):)?(?P<m>\d{2}):(?P<s>\d{2})\]\s*::\s*(?P<txt>.*)\s*$"
     r"|^\[(?P<m2>\d{2}):(?P<s2>\d{2})\]\s*::\s*(?P<txt2>.*)\s*$"
@@ -365,6 +372,7 @@ def build_ass(
     duration,
     font_name="Cormorant Garamond",
     treat_first_as_header: bool = True,
+    segments: Optional[Dict[str, Tuple[float, float]]] = None,
 ):
     font_size = max(42, int(height * 0.052))
     line_height = int(round(font_size * 1.25))
@@ -388,6 +396,15 @@ def build_ass(
             end = min(duration, start + 6.0)
         if end <= start:
             end = start + 0.25
+
+        # segments sidecar — präzise whisper-zeitstempel
+        if segments and not only_header:
+            ts = seconds_to_timestamp(start)
+            if ts in segments:
+                seg_start, seg_end = segments[ts]
+                start = seg_start
+                if seg_end < end:
+                    end = seg_end
 
         # LLM-basierte Annotation & Formatierungen anwenden
         semantic_content: Dict = {}
@@ -480,7 +497,17 @@ def main(argv: Optional[List[str]] = None):
     if not entries:
         raise RuntimeError("Keine gültigen Zeilen gefunden.")
 
-    ass_text = build_ass(file_name, entries, width, height, duration)
+    segments = {}
+    segments_path = args.mapping.with_suffix(".segments")
+    if segments_path.exists():
+        for line in segments_path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            item = json.loads(line)
+            segments[item["ts"]] = (item["start"], item["end"])
+
+    ass_text = build_ass(file_name, entries, width, height, duration, segments=segments)
     args.output.write_text(ass_text, encoding="utf-8")
     print(args.output)
 

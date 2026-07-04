@@ -62,20 +62,20 @@ async def process_pipeline(i):
         shell=True,
         capture_output=True,
         text=True,
-    ).stdout.strip()
+    ).stdout.strip().splitlines()[0]
     cropped_video = subprocess.run(
         f"find /home/muhammed-emin-eser/desk/din/quran/maher_workaround/Quran_cropped/ -type f -name '*({i})*'",
         shell=True,
         capture_output=True,
         text=True,
-    ).stdout.strip()
+    ).stdout.strip().splitlines()[0]
     audio_dir = "/home/muhammed-emin-eser/desk/din/quran/maher_playlist/maher_playlist/"
     audio = subprocess.run(
         f"find {audio_dir} -type f -name '*({i})*'",
         shell=True,
         capture_output=True,
         text=True,
-    ).stdout.strip()
+    ).stdout.strip().splitlines()[0]
 
     # 1. Mapping prüfen
     p_mapping = await run_mapping(translation_file, audio, cropped_video, i)
@@ -89,13 +89,13 @@ async def process_pipeline(i):
         shell=True,
         capture_output=True,
         text=True,
-    ).stdout.strip()
+    ).stdout.strip().splitlines()[0]
     overlay_video = subprocess.run(
         f"find /home/muhammed-emin-eser/desk/din/quran/maher_workaround/with_overlay/ -type f -name '*({i})*'",
         shell=True,
         capture_output=True,
         text=True,
-    ).stdout.strip()
+    ).stdout.strip().splitlines()[0]
 
     ass_output = Path(translation_file).name
     ass_path = f"{BASE_DIR}/output/ass/{ass_output.replace('.txt', '.ass')}"

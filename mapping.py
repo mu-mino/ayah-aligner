@@ -270,8 +270,12 @@ def run(
     if not groups_with_subs:
         return
 
-    segments_path = mapping_path.with_suffix(".segments")
-    segments_path.write_text("")
+    try:
+        segments_path = mapping_path.with_suffix(".segments")
+        segments_path.parent.mkdir(parents=True, exist_ok=True)
+        segments_path.write_text("")
+    except Exception:
+        segments_path = None
 
     whisper_model = load_model(device=whisper_device)
 
@@ -310,11 +314,12 @@ def run(
             )
 
             # segments sidecar — präzise whisper-zeitstempel für sub-einträge
-            segments_data = _collect_segments(session)
-            if segments_data:
-                with open(segments_path, "a") as f:
-                    for item in segments_data:
-                        f.write(json.dumps(item) + "\n")
+            if segments_path is not None:
+                segments_data = _collect_segments(session)
+                if segments_data:
+                    with open(segments_path, "a") as f:
+                        for item in segments_data:
+                            f.write(json.dumps(item) + "\n")
 
             # continuation: ungedeckter suffix → circle_entry der nächsten gruppe
             last_span_end = session.results[-1].span.end

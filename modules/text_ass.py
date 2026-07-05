@@ -332,9 +332,8 @@ def annotate_highlights(verse, highlights: Dict):
         if cat in COLOR_MAP:
             detected_matches.append(
                 {
-                    "index": i
-                    + 1,  # verse_tokens starts with verse id => have to shift pure verse text
-                    "word": verse_tokens[i + 1] if (i + 1) < len(verse_tokens) else "",
+                    "index": i,
+                    "word": verse_tokens[i] if i < len(verse_tokens) else "",
                     "category": cat,
                     "color": COLOR_MAP[cat],
                 }
@@ -343,8 +342,8 @@ def annotate_highlights(verse, highlights: Dict):
             cat = "NONE"
             detected_matches.append(
                 {
-                    "index": i + 1,
-                    "word": verse_tokens[i + 1] if (i + 1) < len(verse_tokens) else "",
+                    "index": i,
+                    "word": verse_tokens[i] if i < len(verse_tokens) else "",
                     "category": cat,
                     "color": COLOR_MAP[cat],
                 }
@@ -354,10 +353,15 @@ def annotate_highlights(verse, highlights: Dict):
     for i, token in enumerate(verse_tokens):
         if i in highlighted_ids:
             w = next((match for match in detected_matches if match["index"] == i), None)
-            if w["category"] == "GOD":
-                w = f"{{\\c{w['color']}}}{{\\b1}}{w['word']}{{\\b0}}{{\\c}}"
+            if w is None:
+                w = token
+            elif r"\c&HAAAAAA&" in token:
+                colored = token.replace(r"\c&HAAAAAA&", rf"\c{w['color']}")
+                w = rf"{{\b1}}{colored}{{\b0}}" if w["category"] == "GOD" else colored
+            elif w["category"] == "GOD":
+                w = f"{{\\c{w['color']}}}{{\\b1}}{token}{{\\b0}}{{\\c}}"
             else:
-                w = f"{{\\c{w['color']}}}{w['word']}{{\\c}}"
+                w = f"{{\\c{w['color']}}}{token}{{\\c}}"
         else:
             w = token
         ass_lines.append(w)
@@ -401,7 +405,7 @@ def build_ass(
         seg_scale_tags = ""
         if segments and not only_header:
             for seg_start, seg_end in segments:
-                if seg_start - 2.0 <= start < seg_end:
+                if seg_start - 2.5 <= start < seg_end:
                     dur_ms = int((end - start) * 1000)
                     if dur_ms > 0:
                         rise = min(400, dur_ms // 4)
@@ -428,7 +432,7 @@ def build_ass(
             if prefix in tokens:
                 offset = tokens.index(prefix)
                 for k, v in ann.items():
-                    semantic_content[int(k) + offset] = v
+                    semantic_content[int(k) + offset + 1] = v
 
         highlighted = annotate_highlights(e.text, semantic_content)
         txt = wrap_ass_text(highlighted if highlighted else e.text, width, font_size)

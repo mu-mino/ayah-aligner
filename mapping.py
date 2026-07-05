@@ -111,35 +111,35 @@ def _transcribe_segments(
     window: FrameWindow,
     model,
 ) -> List[Tuple[float, float]]:
-    """Separate Whisper-Transkription nur für Segment-Grenzen.
+    """Separate Transkription nur für feine Segment-Grenzen.
 
-    Extrahiert Audio ohne Stille-Padding und ohne Pausen-Kompression,
-    verwendet feinere VAD-Schwelle und word_timestamps=True.
-    Die bestehende Pipeline (transcribe_chunks) bleibt unverändert.
+    Ruft faster-whisper direkt auf (nicht den WhisperX-Wrapper)
+    mit feinerer VAD-Schwelle und word_timestamps=True.
+    Kein Stille-Padding, keine Pausen-Kompression.
+    Die bestehende WhisperX-Pipeline (transcribe_chunks) bleibt unverändert.
     """
     import tempfile
-    import whisperx
 
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
         tmp_path = Path(tmp.name)
     try:
         _extract_audio_chunk(audio_path, window.start_sec, window.end_sec, tmp_path)
-        audio = whisperx.load_audio(str(tmp_path))
+        segs, _ = model.model.transcribe(
+            str(tmp_path),
+            language="ar",
+            beam_size=5,
+            word_timestamps=True,
+            vad_filter=True,
+            vad_parameters={"min_silence_duration_ms": 400},
+        )
     finally:
         tmp_path.unlink(missing_ok=True)
 
-    result = model.transcribe(
-        audio,
-        language="ar",
-        word_timestamps=True,
-        vad_options={"min_silence_duration_ms": 400},
-    )
-
     offset = window.start_sec
     segments = []
-    for seg in result.get("segments", []):
-        start = seg["start"] + offset
-        end = seg["end"] + offset
+    for seg in segs:
+        start = seg.start + offset
+        end = seg.end + offset
         segments.append((round(start, 3), round(end, 3)))
     return segments
 

@@ -219,7 +219,7 @@ def _ass_word_tags(
     rendered_lines = []
     aligns_sorted = sorted(
         [wa for wa in word_aligns if wa.get("en")],
-        key=lambda x: x.get("idx", 0),
+        key=lambda x: (x.get("ayah", 0), x.get("idx", 0)),
     )
     for line in lines:
         tokens = [w for w in re.split(r"(\s+)", line) if w]

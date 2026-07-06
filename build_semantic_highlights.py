@@ -4,11 +4,6 @@ import glob
 import re
 from pathlib import Path
 from typing import Optional, List, Tuple
-import stanza
-from openai import OpenAI
-
-stanza.download("en", processors="tokenize,pos")
-nlp = stanza.Pipeline("en", processors="tokenize,pos", use_gpu=True, quiet=True)
 
 # --- Hilfsfunktionen für das Text-Parsing und Splitten ---
 
@@ -28,20 +23,21 @@ def parse_text_file(path: Path) -> Tuple[List[str], List[str]]:
     numbered = re.compile(r"^(\d+)[\.)]\s*(.*)")
     expected_next: Optional[int] = None
 
-    with Path(
-        f"/home/muhammed-emin-eser/desk/din/ayah-aligner/output/mapping/{path.name.replace('txt', 'mapping')}"
-    ).open(encoding="utf-8") as f:
+    with Path(path).open(encoding="utf-8") as f:
         verse_number = 0
         for line in f:
             stripped = line.replace("\\n", " ").replace("\\", " ").strip()
             if not stripped:
                 continue
-            if re.match(r"^\[\d+:\d+\] :: ", line):
-                stripped = re.sub(r"^\[\d+:\d+\] :: ", "", stripped)
-                numbered_lines.append([verse_number, stripped])
-                verse_number += 1
+            match = numbered.match(stripped)
+            if match:
+                verse_number = int(match.group(1))
+                numbered_lines.append([verse_number, match.group(2)])
             else:
-                numbered_lines[-1][1] = numbered_lines[-1][1] + stripped
+                if numbered_lines:
+                    numbered_lines[-1][1] = numbered_lines[-1][1] + " " + stripped
+                else:
+                    title_lines.append(stripped)
 
     return title_lines, numbered_lines
 
@@ -82,16 +78,15 @@ def process_directory(directory_path: str):
             _, numbered_lines = parse_text_file(path_obj)
 
             # Verarbeite die extrahierten, nummerierten Verse
-            # Da numbered_lines sequenziell ab Vers 1 befüllt wird, nutzen wir enumerate(..., start=1)
-            for verse_idx, verse_text in enumerate(numbered_lines, start=0):
-                if verse_idx == 0:
+            for verse_text in numbered_lines:
+                if not verse_text:
                     continue
-                if verse_text:
-                    verse_structure = {"verse_number": verse_idx, "sentences": []}
+                verse_number = verse_text[0]
+                verse_structure = {"verse_number": verse_number, "sentences": []}
 
-                    # LLM semantische Prüfung aufrufen (gibt Dict zurück: {index: "KATEGORIE"})
-                    decisions = check_semantics(verse_text, txt_name, verse_idx)
-                    continue
+                # LLM semantische Prüfung aufrufen (gibt Dict zurück: {index: "KATEGORIE"})
+                decisions = check_semantics(verse_text, txt_name, verse_number)
+                continue
 
                     # Gefundene Kategorien in die Matches-Struktur integrieren
                 file_structure.append(verse_structure)
@@ -101,35 +96,19 @@ def process_directory(directory_path: str):
         yield file_path, file_structure
 
 
-def extract_meaningful_tokens(sentence: str) -> list:
-    """
-    Nutzt Stanza, um den Satz zu analysieren und nur Wörter mit echter Bedeutung
-    (Nomen, Verben, Adjektive, Eigennamen) inklusive ihres originalen Wort-Indexes zurückzugeben.
-    """
-    doc = nlp(sentence)
-    meaningful_matches = []
-
-    FORBIDDEN_POS = {"PUNCT", "DET", "CCONJ", "SCONJ", "PRON", "ADP", "PART"}
-
-    token_index = 0
-    for stanza_sentence in doc.sentences:
-        for word in stanza_sentence.words:
-            if word.upos not in FORBIDDEN_POS:
-                meaningful_matches.append(
-                    {
-                        "index": token_index,
-                        "word": word.text,
-                    }
-                )
-            token_index += 1
-
-    return meaningful_matches
-
-
 # --- Semantische Analyse ---
 
 
+MAX_TOKENS = 4096
+
+
 def run_llama(verse, file_name, verse_idx):
+
+    verse_text = verse[1]  # raw verse text
+    words = verse_text.split()
+
+    # Format each word on its own line with 0-based index
+    numbered_lines = "\n".join(f"{i}: {w}" for i, w in enumerate(words))
 
     prompt = f"""
     You are a precise semantic validation engine.
@@ -163,7 +142,7 @@ def run_llama(verse, file_name, verse_idx):
     - Acts of creation, life-giving, divine reward, ultimate bliss, salvation.
     - Terms of spiritual success: believers, righteous, pious, submitters, truthful, martyrs, those brought near (Muqarrabun).
     - Virtues: patience, humility, repentance, gratitude, sincerity, God-consciousness (Taqwa), excellence (Ihsan), trust in God, contentment.
-    - Names of Paradise: Jannah, Gardens of Eden, Firdaws, Na‘im, Darus-Salam, Illiyyin.
+    - Names of Paradise: Jannah, Gardens of Eden, Firdaws, Na'im, Darus-Salam, Illiyyin.
     - Heavenly delights: Tuba-tree, Sidrah, Kawthar, Tasnim, Salsabil, pure milk, honey, non-intoxicating wine.
     - Acts of divine grace: guiding, forgiving, pardoning, embracing, admitting to Paradise, bringing glad tidings, loving.
     - **Fear of God (and only that)** falls under CONSTRUCTIVE. Example: "fear Allah" → fear = CONSTRUCTIVE.
@@ -177,10 +156,10 @@ def run_llama(verse, file_name, verse_idx):
     - Common nouns that are neutral (e.g., "people", "men", "day", "time") when not explicitly tied to one of the three categories.
     - If a word belongs clearly to GOD/DESTRUCTIVE/CONSTRUCTIVE, do NOT use NONE.
 
-
     OUTPUT RULE:
-    Your response must be a valid JSON object where the keys are the string representation of the word indexes, and values are the assigned category strings.
-    Do NOT include any markdown formatting, backticks, or explanation.
+    - Return a valid JSON object where keys are 0-based word indices (shown before each word in the VERSE listing below) and values are the assigned category strings.
+    - ONLY include words that are GOD, DESTRUCTIVE, or CONSTRUCTIVE. OMIT words that are NONE — do not list them.
+    - Do NOT include any markdown formatting, backticks, or explanation.
     
     Example Output Format:
     {{
@@ -189,43 +168,19 @@ def run_llama(verse, file_name, verse_idx):
     }}
     """
 
+    user_content = (
+        f"VERSE (0-based word indices):\n{numbered_lines}\n\n"
+        f"Return a JSON object with only non-NONE words (GOD, DESTRUCTIVE, CONSTRUCTIVE)."
+    )
+
     try:
-        # client = OpenAI(
-        #     api_key="sk-ws-H.IEDDEX.RqQn.MEYCIQDXufYP1QkVhsy8CYvgtWKM6itnCPzplRhHpsXmo1DAxAIhAN0P_Na2bxg43pfEekm7S58u0IeeJfU5jmAxXLT4beRv",
-        #     base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
-        # )
-        #
-        #        {
-        #            "custom_id": "req-1",
-        #            "method": "POST",
-        #            "url": "/v1/chat/completions",
-        #            "body": {
-        #                "model": "qwen-plus",
-        #                "messages": [
-        #                    {
-        #                        "role": "user",
-        #                        "content": "Summarize quantum computing in two sentences.",
-        #                    }
-        #                ],
-        #            },
-        #        }
-        #
-        #        {
-        #            "custom_id": "req-2",
-        #            "method": "POST",
-        #            "url": "/v1/chat/completions",
-        #            "body": {
-        #                "model": "qwen-plus",
-        #                "messages": [{"role": "user", "content": "What is 2+2?"}],
-        #            },
-        #        }
-        #
         request = {
             "custom_id": f"{verse_idx}",
             "method": "POST",
             "url": "/v1/chat/completions",
             "body": {
                 "model": "qwen-max",
+                "max_tokens": MAX_TOKENS,
                 "messages": [
                     {
                         "role": "system",
@@ -239,7 +194,7 @@ def run_llama(verse, file_name, verse_idx):
                     },
                     {
                         "role": "user",
-                        "content": f"VERSE:\n'{verse[1]}'\n\n",
+                        "content": user_content,
                     },
                 ],
                 "response_format": {
@@ -262,76 +217,14 @@ def run_llama(verse, file_name, verse_idx):
             "a",
             encoding="utf-8",
         ) as f:
-            # json.dumps konvertiert das Dictionary in einen einzeiligen String
             f.write(json.dumps(request, ensure_ascii=False) + "\n")
-    #     response = client.chat.completions.create(
-    #         model="qwen3.7-max",
-    #         temperature=0.0,
-    #         messages=[
-    #             {
-    #                 "role": "system",
-    #                 "content": [
-    #                     {
-    #                         "type": "text",
-    #                         "text": f"{prompt}",
-    #                         "cache_control": {"type": "ephemeral"},
-    #                     }
-    #                 ],
-    #             },
-    #             {
-    #                 "role": "user",
-    #                 "content": f"""
-    #             VERSE:
-    #             "{verse}"
-    #
-    #             TARGET WORDS TO VERIFY:
-    #             {targets_string}
-    #         """,
-    #             },
-    #         ],
-    #     )
-    #     ki_text_output = response.choices[0].message.content
-    #     print(
-    #         f"Cache created: {response.usage.prompt_tokens_details.cache_creation_input_tokens}"
-    #     )
-    #     print(f"Cache hit: {response.usage.prompt_tokens_details.cached_tokens}")
-    #     print(ki_text_output)
     except Exception as e:
         print(f"Error message: {e}")
         RuntimeError("Non ok Status Code")
-    #
-    # return ki_text_output
 
 
 def check_semantics(verse, file_name, verse_idx):
-    """
-    matches: Liste von Dicts/Tuples, z.B.:
-             [{"index": 3, "word": "Gott"}, ...]
-    """
-
-    decisions = run_llama(verse, file_name, verse_idx)
-    return None
-    try:
-        decisions = {int(k): v for k, v in json.loads(decisions).items()}
-
-    except Exception:
-        decisions = {}
-
-    # Konsolen-Validierung (bunter Satz)
-    GRUEN = "\033[32m"
-    RESET = "\033[0m"
-    worte = verse.split()
-    for v in tokens:
-        for m in v:
-            idx = m["index"]
-            if idx < len(worte) and decisions.get(idx):
-                worte[idx] = f"{GRUEN}{worte[idx]}{RESET}"
-        bunter_satz = " ".join(worte)
-
-        ausgabe = f"{'#' * 55}\nSENTENCE: \t {bunter_satz}\n{'#' * 55}\nDECISIONS: \t {decisions}\n\n\n"
-        print(ausgabe)
-
-    return decisions
+    run_llama(verse, file_name, verse_idx)
 
 
 # --- Ausführung ---

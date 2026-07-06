@@ -2,6 +2,7 @@ numpy
 opencv-python-headless
 torch
 whisperx
+whisper-timestamped
 transformers
 sentence-transformers
 pytest

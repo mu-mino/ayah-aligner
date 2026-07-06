@@ -283,9 +283,8 @@ def stamp_per_segment_transcription(
     model_name: str = "large-v2",
     compute_type: str = "float16",
 ):
-    # 1. Device bestimmen (falls nicht übergeben)
     import torch
-    import whisperx
+    import whisper_timestamped as wt
 
     if device is None:
         device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -293,53 +292,50 @@ def stamp_per_segment_transcription(
         compute_type = "int8"
 
     # 2. Modell laden via whisperx
-    model = whisperx.load_model(
+    model = wt.load_model(
         model_name,
         device=device,
-        compute_type=compute_type,
-        language=WHISPER_LANGUAGE,
     )
 
-    # 3. Audio laden
-    audio = whisperx.load_audio(audio_path)
+    audio = wt.load_audio(audio_path)
 
-    # Falls ein FrameWindow übergeben wurde, schneiden wir das Audio passend zu
     if time_window is not None:
-        # whisperx.load_audio lädt das Audio mit einer Samplerate von 16000Hz
         sample_rate = AUDIO_SAMPLE_RATE
         start_sample = int(time_window.start_sec * sample_rate)
         end_sample = int(time_window.end_sec * sample_rate)
         audio = audio[start_sample:end_sample]
 
-    # 4. Reine Whisper-Transkription (liefert Segmente/Sätze)
-    result = model.transcribe(audio, batch_size=16)
+    result = wt.transcribe(
+        model,
+        audio,
+        language=WHISPER_LANGUAGE,
+        beam_size=5,
+        no_speech_threshold=ASR_OPTIONS.get("no_speech_threshold", 0.6),
+        initial_prompt=ASR_OPTIONS.get("initial_prompt"),
+    )
 
-    # Zeit-Offset hinzufügen, falls wir einen Ausschnitt gewählt haben
     offset = time_window.start_sec if time_window is not None else 0.0
 
-    print("\n--- Transkription nach Segmenten ---")
+    print("\n--- Transkription nach Wörtern (whisper-timestamped) ---")
     segments_with_absolute_timestamps: list[TranscriptSegment] = []
-    # 5. Iteriere durch alle Sätze (Segmente)
     for segment in result["segments"]:
-        text = segment["text"].strip()
-        start = segment.get("start")
-        end = segment.get("end")
-        if start is not None and end is not None:
-            # Offset addieren, damit die Timestamps zum originalen Audio passen
-            absoluter_start = start + offset
-            absolutes_ende = end + offset
-            stamp = _format_segment_stamp(absoluter_start, absolutes_ende)
-            segments_with_absolute_timestamps.append(
-                TranscriptSegment(
-                    start=absoluter_start,
-                    end=absolutes_ende,
-                    text=text,
-                    stamp=stamp,
+        for word in segment.get("words", []):
+            text = word["text"].strip()
+            start = word.get("start")
+            end = word.get("end")
+            if start is not None and end is not None and text:
+                absoluter_start = start + offset
+                absolutes_ende = end + offset
+                stamp = _format_segment_stamp(absoluter_start, absolutes_ende)
+                segments_with_absolute_timestamps.append(
+                    TranscriptSegment(
+                        start=absoluter_start,
+                        end=absolutes_ende,
+                        text=text,
+                        stamp=stamp,
+                    )
                 )
-            )
-            print(f"{stamp}: {text}")
-        else:
-            print(f"[Keine Zeit]: {text}")
+                print(f"{stamp}: {text}")
     return segments_with_absolute_timestamps
 
 

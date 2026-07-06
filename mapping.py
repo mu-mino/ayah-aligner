@@ -103,9 +103,6 @@ class WindowGroup:
 # ---------------------------------------------------------------------------
 
 
-
-
-
 def _transcribe_segments(
     audio_path: Path,
     window: FrameWindow,
@@ -294,7 +291,8 @@ def run(
     # ------------------------------------------------------------------
     whisper_model = load_model(device=whisper_device)
 
-    segments_path = mapping_path.with_suffix(".segments")
+    segments_path = BASE_DIR / "output" / "segments"
+
     segments_path.parent.mkdir(parents=True, exist_ok=True)
 
     with open(segments_path, "w") as f:
@@ -334,10 +332,15 @@ def run(
         with open(segments_path, "a") as f:
             for chunk in chunks:
                 for seg in chunk.segments:
-                    f.write(json.dumps({
-                        "start": round(seg.start, 3),
-                        "end": round(seg.end, 3),
-                    }) + "\n")
+                    f.write(
+                        json.dumps(
+                            {
+                                "start": round(seg.start, 3),
+                                "end": round(seg.end, 3),
+                            }
+                        )
+                        + "\n"
+                    )
 
         session = run_matching(
             chunks=chunks,

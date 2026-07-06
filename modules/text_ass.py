@@ -10,6 +10,8 @@ import numpy as np
 from llama_cpp import Llama
 from pyparsing import originalTextFor, nestedExpr, CharsNotIn
 
+BASE_DIR = Path(__file__).parent
+
 LLM = Llama(
     model_path="/home/muhammed-emin-eser/.cache/huggingface/hub/models--bartowski--Qwen2.5-14B-Instruct-GGUF/snapshots/05244aa5d871c661c80082a15d3bce44714d068d/Qwen2.5-14B-Instruct-Q4_K_M.gguf",
     n_ctx=6000,
@@ -508,18 +510,17 @@ def main(argv: Optional[List[str]] = None):
         raise RuntimeError("Keine gültigen Zeilen gefunden.")
 
     segments = []
-    try:
-        segments_path = args.mapping.with_suffix(".segments")
-        if segments_path.exists():
-            for line in segments_path.read_text(encoding="utf-8").splitlines():
-                line = line.strip()
-                if not line:
-                    continue
-                item = json.loads(line)
-                segments.append((item["start"], item["end"]))
-        segments.sort(key=lambda x: x[0])
-    except Exception:
-        pass
+    segments_path = BASE_DIR / "output" / "segments"
+    if segments_path.exists():
+        for line in segments_path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            item = json.loads(line)
+            segments.append((item["start"], item["end"]))
+    else:
+        RuntimeError(f"{segments_path} does not exist")
+    segments.sort(key=lambda x: x[0])
 
     ass_text = build_ass(file_name, entries, width, height, duration, segments=segments)
     args.output.write_text(ass_text, encoding="utf-8")

@@ -145,6 +145,7 @@ class MatchResult:
     arabic_text: str
     span: TextSpan
     score: float
+    word_alignments: List[Tuple[str, str, int]] = field(default_factory=list)
 
 
 @dataclass
@@ -589,12 +590,24 @@ def run_matching(
         char_start, char_end, span_text, score = find_semantic_span(
             query, session.verse_text
         )
+
+        chunk_duration = chunk.window.end_sec - chunk.window.start_sec
+        n_words = len(text)
+        word_alignments = []
+        for i, ar_word in enumerate(text):
+            word_start = chunk.window.start_sec + (i / n_words) * chunk_duration
+            word_end = chunk.window.start_sec + ((i + 1) / n_words) * chunk_duration
+            en_word = translations[i] if i < len(translations) else ""
+            idx = matched_pairs[i][1] if i < len(matched_pairs) else -1
+            word_alignments.append((ar_word, en_word, round(word_start, 3), round(word_end, 3), idx))
+
         session.results.append(
             MatchResult(
                 chunk=chunk,
                 arabic_text=text,
                 span=TextSpan(start=char_start, end=char_end, text=span_text),
                 score=score,
+                word_alignments=word_alignments,
             )
         )
 

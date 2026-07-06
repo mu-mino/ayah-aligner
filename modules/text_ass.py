@@ -208,6 +208,59 @@ def karaoke_reveal_words(text: str) -> str:
     return r"\N".join(rendered_lines)
 
 
+def _ass_word_tags(
+    text: str,
+    entry_start: float,
+    entry_end: float,
+    word_aligns: List[dict],
+) -> str:
+    """Wrap every word with karaoke reveal + per-word fscx/fscy animation."""
+    lines = text.split("\n")
+    rendered_lines = []
+    aligns_sorted = sorted(
+        [wa for wa in word_aligns if wa.get("en")],
+        key=lambda x: x.get("idx", 0),
+    )
+    for line in lines:
+        tokens = [w for w in re.split(r"(\s+)", line) if w]
+        out = []
+        align_idx = 0
+        for token in tokens:
+            if token.isspace():
+                out.append(token)
+                continue
+            if re.match(r"^\d+:$", token):
+                out.append(token)
+                continue
+
+            if align_idx < len(aligns_sorted):
+                wa = aligns_sorted[align_idx]
+                rel_start = max(0, (wa["start"] - entry_start) * 1000)
+                rel_end = min((entry_end - entry_start) * 1000, (wa["end"] - entry_start) * 1000)
+                align_idx += 1
+            else:
+                content_tokens = [t for t in tokens if not t.isspace() and not re.match(r"^\d+:$", t)]
+                n_words = len(content_tokens)
+                word_pos = len([t for t in out if not t.isspace() and not re.match(r"^\d+:$", t)])
+                dur = (entry_end - entry_start) * 1000
+                per_word = dur / max(1, n_words)
+                rel_start = word_pos * per_word
+                rel_end = (word_pos + 1) * per_word
+
+            dur = max(1, rel_end - rel_start)
+            rise = min(400, int(dur // 4))
+            fall = min(400, int(dur // 4))
+
+            tags = (
+                rf"{{\k2}}"
+                rf"{{\t({int(rel_start)},{int(rel_start) + rise},\fscx(106)\fscy(106))"
+                rf"\t({int(rel_end) - fall},{int(rel_end)},\fscx(100)\fscy(100))}}"
+            )
+            out.append(f"{tags}{token}")
+        rendered_lines.append("".join(out))
+    return r"\N".join(rendered_lines)
+
+
 def normalize(word: str) -> str:
     return re.sub(r"[^\w]", "", word).strip()
 
@@ -378,7 +431,7 @@ def build_ass(
     duration,
     font_name="Cormorant Garamond",
     treat_first_as_header: bool = True,
-    segments: Optional[Dict[str, Tuple[float, float]]] = None,
+    word_alignments: Optional[List[dict]] = None,
 ):
     font_size = max(42, int(height * 0.052))
     line_height = int(round(font_size * 1.25))
@@ -403,21 +456,6 @@ def build_ass(
         if end <= start:
             end = start + 0.25
 
-        # segments sidecar — scale-animation für einträge mit segment-abdeckung
-        seg_scale_tags = ""
-        if segments and not only_header:
-            for seg_start, seg_end in segments:
-                if seg_start - 2.5 <= start < seg_end:
-                    dur_ms = int((end - start) * 1000)
-                    if dur_ms > 0:
-                        rise = min(400, dur_ms // 4)
-                        fall = min(400, dur_ms // 4)
-                        seg_scale_tags = (
-                            rf"\t(0,{rise},\fscx(106)\fscy(106))"
-                            rf"\t({dur_ms - fall},{dur_ms},\fscx(100)\fscy(100))"
-                        )
-                    break
-
         # LLM-basierte Annotation & Formatierungen anwenden
         semantic_content: Dict = {}
         tokens = e.text.split()
@@ -438,7 +476,14 @@ def build_ass(
 
         highlighted = annotate_highlights(e.text, semantic_content)
         txt = wrap_ass_text(highlighted if highlighted else e.text, width, font_size)
-        txt = karaoke_reveal_words(txt)
+
+        # Per-word karaoke + fscx/fscy animation (word-level timing)
+        wa_for_entry = (
+            [wa for wa in word_alignments if wa.get("ayah") in verse_nums]
+            if word_alignments
+            else []
+        )
+        txt = _ass_word_tags(txt, start, end, wa_for_entry)
 
         x, y = (
             int(width * 0.5),
@@ -455,7 +500,7 @@ def build_ass(
 
         line_count = txt.count(r"\N") + 1
         y_adjusted = y + (line_height // 2 if line_count >= 5 else 0)
-        tags = rf"\an5\pos({x},{y_adjusted})\fad(120,150)\bord1\blur0{seg_scale_tags}"
+        tags = rf"\an5\pos({x},{y_adjusted})\fad(120,150)\bord1\blur0"
         events.append(
             f"Dialogue: 0,{sec_to_ass_time(start)},{sec_to_ass_time(end)},Overlay,,0,0,0,,{{{tags}}}{txt}"
         )
@@ -509,20 +554,12 @@ def main(argv: Optional[List[str]] = None):
     if not entries:
         raise RuntimeError("Keine gültigen Zeilen gefunden.")
 
-    segments = []
-    segments_path = BASE_DIR / "output" / "segments"
-    if segments_path.exists():
-        for line in segments_path.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            item = json.loads(line)
-            segments.append((item["start"], item["end"]))
-    else:
-        RuntimeError(f"{segments_path} does not exist")
-    segments.sort(key=lambda x: x[0])
+    word_alignments = []
+    word_align_path = BASE_DIR / "output" / "word_align.json"
+    if word_align_path.exists():
+        word_alignments = json.loads(word_align_path.read_text(encoding="utf-8"))
 
-    ass_text = build_ass(file_name, entries, width, height, duration, segments=segments)
+    ass_text = build_ass(file_name, entries, width, height, duration, word_alignments=word_alignments)
     args.output.write_text(ass_text, encoding="utf-8")
     print(args.output)
 

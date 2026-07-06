@@ -44,6 +44,8 @@ from modules.semanticmatch import (
     patch_circlelog,
     extract_verse_text,
     extract_verse_number,
+    _fetch_verse_words,
+    _word_to_translation,
 )
 
 BASE_DIR = Path(__file__).parent
@@ -107,7 +109,7 @@ def _transcribe_segments(
     audio_path: Path,
     window: FrameWindow,
     model,
-) -> List[Tuple[float, float]]:
+) -> List[Tuple[float, float, str]]:
     """Separate Transkription nur für feine Segment-Grenzen.
 
     Ruft faster-whisper direkt auf (nicht den WhisperX-Wrapper)
@@ -135,9 +137,15 @@ def _transcribe_segments(
     offset = window.start_sec
     segments = []
     for seg in segs:
-        start = seg.start + offset
-        end = seg.end + offset
-        segments.append((round(start, 3), round(end, 3)))
+        if seg.words:
+            for word in seg.words:
+                start = word.start + offset
+                end = word.end + offset
+                segments.append((round(start, 3), round(end, 3), word.word.strip()))
+        else:
+            start = seg.start + offset
+            end = seg.end + offset
+            segments.append((round(start, 3), round(end, 3), seg.text.strip()))
     return segments
 
 
@@ -292,14 +300,42 @@ def run(
     whisper_model = load_model(device=whisper_device)
 
     segments_path = BASE_DIR / "output" / "segments"
+    word_align_path = BASE_DIR / "output" / "word_align.json"
 
     segments_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # 4a. Circle-window transcribe & segments schreiben + word alignment
+    circle_word_segs: List[Tuple[WindowGroup, List[Tuple[float, float, str]]]] = []
+    all_word_aligns: List[dict] = []
 
     with open(segments_path, "w") as f:
         for group in groups:
             segs = _transcribe_segments(audio_path, group.circle_window, whisper_model)
-            for start, end in segs:
-                f.write(json.dumps({"start": start, "end": end}) + "\n")
+            circle_word_segs.append((group, segs))
+            for start, end, text in segs:
+                f.write(json.dumps({"start": start, "end": end, "text": text}) + "\n")
+
+    # 4b. Word-level alignment für ALLE groups (circle windows)
+    for group, segs in circle_word_segs:
+        for verse_num, _ in group.verses:
+            try:
+                verse_words = _fetch_verse_words(surah, verse_num)
+            except Exception:
+                continue
+            for start, end, ar_word in segs:
+                en_word, idx = _word_to_translation(ar_word, verse_words)
+                all_word_aligns.append({
+                    "start": start,
+                    "end": end,
+                    "ar": ar_word,
+                    "en": en_word,
+                    "idx": idx,
+                    "ayah": verse_num,
+                })
+
+    word_align_path.write_text(
+        json.dumps(all_word_aligns, ensure_ascii=False), encoding="utf-8"
+    )
 
     # ------------------------------------------------------------------
     # 5. Sub-Fenster transkribieren + matchen + Mapping patchen
@@ -308,6 +344,8 @@ def run(
     groups_with_subs = [g for g in groups if g.sub_windows]
     if not groups_with_subs:
         return
+
+    sub_word_aligns: List[dict] = []
 
     for idx, group in enumerate(groups):
         if not group.sub_windows:
@@ -328,7 +366,7 @@ def run(
             model=whisper_model,
         )
 
-        # Sub-window segments zum sidecar appenden
+        # Sub-window segments zum sidecar appenden (mit text)
         with open(segments_path, "a") as f:
             for chunk in chunks:
                 for seg in chunk.segments:
@@ -337,6 +375,7 @@ def run(
                             {
                                 "start": round(seg.start, 3),
                                 "end": round(seg.end, 3),
+                                "text": seg.text,
                             }
                         )
                         + "\n"
@@ -350,6 +389,18 @@ def run(
         )
 
         if session.results:
+            # Word alignment aus session.results extrahieren
+            for result in session.results:
+                for (ar_word, en_word, w_start, w_end, idx) in result.word_alignments:
+                    sub_word_aligns.append({
+                        "start": w_start,
+                        "end": w_end,
+                        "ar": ar_word,
+                        "en": en_word,
+                        "idx": idx,
+                        "ayah": next_verse_num,
+                    })
+
             affected_timestamp = group.mapping_ts
             patch_circlelog(
                 mapping_path=mapping_path,
@@ -383,6 +434,14 @@ def run(
                     verse_num_prepended = True
                 cleaned.append(file_line)
             mapping_path.write_text("\n".join(cleaned) + "\n", encoding="utf-8")
+
+    # Sub-window alignments an word_align.json appenden
+    if sub_word_aligns:
+        existing = json.loads(word_align_path.read_text(encoding="utf-8"))
+        existing.extend(sub_word_aligns)
+        word_align_path.write_text(
+            json.dumps(existing, ensure_ascii=False), encoding="utf-8"
+        )
 
 
 # ---------------------------------------------------------------------------

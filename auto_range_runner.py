@@ -90,11 +90,11 @@ async def process_pipeline(i):
     )
 
     # 1. Mapping prüfen
-    p_mapping = await run_mapping(translation_file, audio, cropped_video, i)
-    if p_mapping.returncode != 0:
-        raise RuntimeError(
-            f"Pipeline {i}: mapping.py fehlgeschlagen mit Exit-Code {p_mapping.returncode}"
-        )
+    # p_mapping = await run_mapping(translation_file, audio, cropped_video, i)
+    # if p_mapping.returncode != 0:
+    #     raise RuntimeError(
+    #         f"Pipeline {i}: mapping.py fehlgeschlagen mit Exit-Code {p_mapping.returncode}"
+    #     )
 
     mapping_file = (
         subprocess.run(

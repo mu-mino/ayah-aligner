@@ -296,20 +296,22 @@ def _progressive_word_lines(
         lines_visible = []
         for li_w in range(len(wrapped_lines)):
             words_in_this_line = [
-                (j, w) for j, (w, l, v, p) in enumerate(word_entries[:i + 1]) if l == li_w
+                (j, w)
+                for j, (w, l, v, p) in enumerate(word_entries[: i + 1])
+                if l == li_w
             ]
             if not words_in_this_line:
                 continue
             parts = []
             for j, w in words_in_this_line:
                 if j < i:
-                    parts.append(rf"{{\k2}}{w}")
+                    parts.append(w)
                 else:
                     parts.append(
                         rf"{{\alpha&HFF&}}"
                         rf"{{\k2"
                         rf"\t(0,80,\alpha&H00&)"
-                        rf"\t(0,{rise},\fscx106\fscy106)"
+                        rf"\t(0,{rise},\fscx97\fscy97)"
                         rf"\t({word_dur_ms - fall},{word_dur_ms},\fscx100\fscy100)}}"
                         rf"{w}"
                     )

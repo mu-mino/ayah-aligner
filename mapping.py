@@ -312,6 +312,7 @@ def run(
     # 4b. Word-level alignment für ALLE groups (circle windows)
     # Build segment→English text map for segments output
     segment_en_map: Dict[Tuple[float, float], str] = {}
+    seen_ayah_idx: set = set()
 
     for group, segs in circle_word_segs:
         for verse_num, _ in group.verses:
@@ -321,7 +322,8 @@ def run(
                 continue
             for start, end, ar_word in segs:
                 en_word, idx = _word_to_translation(ar_word, verse_words)
-                if idx >= 0:
+                if idx >= 0 and (verse_num, idx) not in seen_ayah_idx:
+                    seen_ayah_idx.add((verse_num, idx))
                     all_word_aligns.append({
                         "start": start,
                         "end": end,
@@ -459,10 +461,15 @@ def run(
                 cleaned.append(file_line)
             mapping_path.write_text("\n".join(cleaned) + "\n", encoding="utf-8")
 
-    # Sub-window alignments an word_align.json appenden
+    # Sub-window alignments an word_align.json appenden (dedupliziert nach ayah,idx)
     if sub_word_aligns:
         existing = json.loads(word_align_path.read_text(encoding="utf-8"))
-        existing.extend(sub_word_aligns)
+        existing_pairs = {(d["ayah"], d["idx"]) for d in existing if d.get("idx", -1) >= 0}
+        for wa in sub_word_aligns:
+            key = (wa["ayah"], wa["idx"])
+            if key not in existing_pairs:
+                existing_pairs.add(key)
+                existing.append(wa)
         word_align_path.write_text(
             json.dumps(existing, ensure_ascii=False), encoding="utf-8"
         )

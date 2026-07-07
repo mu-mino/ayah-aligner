@@ -321,14 +321,15 @@ def run(
                 continue
             for start, end, ar_word in segs:
                 en_word, idx = _word_to_translation(ar_word, verse_words)
-                all_word_aligns.append({
-                    "start": start,
-                    "end": end,
-                    "ar": ar_word,
-                    "en": en_word,
-                    "idx": idx,
-                    "ayah": verse_num,
-                })
+                if idx >= 0:
+                    all_word_aligns.append({
+                        "start": start,
+                        "end": end,
+                        "ar": ar_word,
+                        "en": en_word,
+                        "idx": idx,
+                        "ayah": verse_num,
+                    })
                 # Store first successful English match per segment
                 if en_word and (start, end) not in segment_en_map:
                     segment_en_map[(start, end)] = en_word

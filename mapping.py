@@ -346,9 +346,6 @@ def run(
                 en = segment_en_map.get((start, end), "")
                 if en:
                     f.write(json.dumps({"start": start, "end": end, "text": en}) + "\n")
-                else:
-                    # Behalte das segment trotzdem, leeres text = wird nach fill_gaps annexed
-                    f.write(json.dumps({"start": start, "end": end, "text": ""}) + "\n")
 
     # ------------------------------------------------------------------
     # 5. Sub-Fenster transkribieren + matchen + Mapping patchen

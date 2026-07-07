@@ -299,23 +299,20 @@ def run(
     # ------------------------------------------------------------------
     whisper_model = load_model(device=whisper_device)
 
-    segments_path = BASE_DIR / "output" / "segments"
     word_align_path = BASE_DIR / "output" / "word_align.json"
 
-    segments_path.parent.mkdir(parents=True, exist_ok=True)
-
-    # 4a. Circle-window transcribe & segments schreiben + word alignment
+    # 4a. Circle-window transcribe & word alignment
     circle_word_segs: List[Tuple[WindowGroup, List[Tuple[float, float, str]]]] = []
     all_word_aligns: List[dict] = []
 
-    with open(segments_path, "w") as f:
-        for group in groups:
-            segs = _transcribe_segments(audio_path, group.circle_window, whisper_model)
-            circle_word_segs.append((group, segs))
-            for start, end, text in segs:
-                f.write(json.dumps({"start": start, "end": end, "text": text}) + "\n")
+    for group in groups:
+        segs = _transcribe_segments(audio_path, group.circle_window, whisper_model)
+        circle_word_segs.append((group, segs))
 
     # 4b. Word-level alignment für ALLE groups (circle windows)
+    # Build segment→English text map for segments output
+    segment_en_map: Dict[Tuple[float, float], str] = {}
+
     for group, segs in circle_word_segs:
         for verse_num, _ in group.verses:
             try:
@@ -332,10 +329,26 @@ def run(
                     "idx": idx,
                     "ayah": verse_num,
                 })
+                # Store first successful English match per segment
+                if en_word and (start, end) not in segment_en_map:
+                    segment_en_map[(start, end)] = en_word
 
     word_align_path.write_text(
         json.dumps(all_word_aligns, ensure_ascii=False), encoding="utf-8"
     )
+
+    # 4c. Write segments with English text (circle windows)
+    segments_path = BASE_DIR / "output" / "segments" / f"{text_path.stem}.segments"
+    segments_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(segments_path, "w") as f:
+        for _, segs in circle_word_segs:
+            for start, end, ar_word in segs:
+                en = segment_en_map.get((start, end), "")
+                if en:
+                    f.write(json.dumps({"start": start, "end": end, "text": en}) + "\n")
+                else:
+                    # Behalte das segment trotzdem, leeres text = wird nach fill_gaps annexed
+                    f.write(json.dumps({"start": start, "end": end, "text": ""}) + "\n")
 
     # ------------------------------------------------------------------
     # 5. Sub-Fenster transkribieren + matchen + Mapping patchen
@@ -366,21 +379,6 @@ def run(
             model=whisper_model,
         )
 
-        # Sub-window segments zum sidecar appenden (mit text)
-        with open(segments_path, "a") as f:
-            for chunk in chunks:
-                for seg in chunk.segments:
-                    f.write(
-                        json.dumps(
-                            {
-                                "start": round(seg.start, 3),
-                                "end": round(seg.end, 3),
-                                "text": seg.text,
-                            }
-                        )
-                        + "\n"
-                    )
-
         session = run_matching(
             chunks=chunks,
             verse_text=next_verse_text,
@@ -400,6 +398,34 @@ def run(
                         "idx": idx,
                         "ayah": next_verse_num,
                     })
+
+            # Sub-window segments mit English text an segments file appenden
+            sub_en_map: Dict[Tuple[float, float], str] = {}
+            for r in session.results:
+                for (_, en_word, ws, we, _) in r.word_alignments:
+                    key = (round(ws, 3), round(we, 3))
+                    if en_word and key not in sub_en_map:
+                        sub_en_map[key] = en_word
+            with open(segments_path, "a") as f:
+                for chunk in chunks:
+                    for seg in chunk.segments:
+                        skey = (round(seg.start, 3), round(seg.end, 3))
+                        en_text = sub_en_map.get(skey, "")
+                        if not en_text:
+                            # timenächsten match suchen
+                            best = min(
+                                sub_en_map.keys(),
+                                key=lambda k: abs(k[0] - seg.start),
+                                default=None,
+                            )
+                            if best:
+                                en_text = sub_en_map[best]
+                        f.write(
+                            json.dumps(
+                                {"start": skey[0], "end": skey[1], "text": en_text}
+                            )
+                            + "\n"
+                        )
 
             affected_timestamp = group.mapping_ts
             patch_circlelog(

@@ -10,7 +10,7 @@ import numpy as np
 from llama_cpp import Llama
 from pyparsing import originalTextFor, nestedExpr, CharsNotIn
 
-BASE_DIR = Path(__file__).parent
+BASE_DIR = Path(__file__).parent.parent
 
 LLM = Llama(
     model_path="/home/muhammed-emin-eser/.cache/huggingface/hub/models--bartowski--Qwen2.5-14B-Instruct-GGUF/snapshots/05244aa5d871c661c80082a15d3bce44714d068d/Qwen2.5-14B-Instruct-Q4_K_M.gguf",
@@ -208,57 +208,83 @@ def karaoke_reveal_words(text: str) -> str:
     return r"\N".join(rendered_lines)
 
 
-def _ass_word_tags(
+import re
+from typing import List, Tuple
+
+
+def _progressive_word_lines(
     text: str,
     entry_start: float,
     entry_end: float,
     word_aligns: List[dict],
-) -> str:
-    """Wrap every word with karaoke reveal + per-word fscx/fscy animation."""
-    lines = text.split("\n")
-    rendered_lines = []
+) -> List[Tuple[str, float, float]]:
+    """Build progressive per-word dialogue lines.
+
+    Each line adds one new word (previous words stay, new word has \t scale).
+    Future words are NOT visible yet.
+    """
     aligns_sorted = sorted(
         [wa for wa in word_aligns if wa.get("en")],
         key=lambda x: (x.get("ayah", 0), x.get("idx", 0)),
     )
-    for line in lines:
-        tokens = [w for w in re.split(r"(\s+)", line) if w]
-        out = []
-        align_idx = 0
-        for token in tokens:
-            if token.isspace():
-                out.append(token)
-                continue
-            if re.match(r"^\d+:$", token):
-                out.append(token)
-                continue
 
-            if align_idx < len(aligns_sorted):
-                wa = aligns_sorted[align_idx]
-                rel_start = max(0, (wa["start"] - entry_start) * 1000)
-                rel_end = min((entry_end - entry_start) * 1000, (wa["end"] - entry_start) * 1000)
-                align_idx += 1
-            else:
-                content_tokens = [t for t in tokens if not t.isspace() and not re.match(r"^\d+:$", t)]
-                n_words = len(content_tokens)
-                word_pos = len([t for t in out if not t.isspace() and not re.match(r"^\d+:$", t)])
-                dur = (entry_end - entry_start) * 1000
-                per_word = dur / max(1, n_words)
-                rel_start = word_pos * per_word
-                rel_end = (word_pos + 1) * per_word
+    tokens = text.split()
+    content_words = [t for t in tokens if not re.match(r"^\d+:$", t)]
+    if not content_words:
+        return []
 
-            dur = max(1, rel_end - rel_start)
-            rise = min(400, int(dur // 4))
-            fall = min(400, int(dur // 4))
+    # No alignments at all → single line without scale
+    if not aligns_sorted:
+        return [
+            (f" ".join(rf"{{\k2}}{w}" for w in content_words), entry_start, entry_end)
+        ]
 
-            tags = (
-                rf"{{\k2}}"
-                rf"{{\t({int(rel_start)},{int(rel_start) + rise},\fscx(106)\fscy(106))"
-                rf"\t({int(rel_end) - fall},{int(rel_end)},\fscx(100)\fscy(100))}}"
+    # Build per-word timings
+    word_timings: List[Tuple[float, float]] = []
+    for i, _ in enumerate(content_words):
+        if i < len(aligns_sorted):
+            word_timings.append((aligns_sorted[i]["start"], aligns_sorted[i]["end"]))
+        else:
+            last_wa = aligns_sorted[-1]
+            overflow = len(content_words) - len(aligns_sorted)
+            slots = 1 + overflow
+            slot_dur = (last_wa["end"] - last_wa["start"]) / max(1, slots)
+            slot_idx = i - (len(aligns_sorted) - 1)
+            word_timings.append(
+                (
+                    last_wa["start"] + slot_idx * slot_dur,
+                    last_wa["start"] + (slot_idx + 1) * slot_dur,
+                )
             )
-            out.append(f"{tags}{token}")
-        rendered_lines.append("".join(out))
-    return r"\N".join(rendered_lines)
+
+    result: List[Tuple[str, float, float]] = []
+    for i, word in enumerate(content_words):
+        cur_start, cur_end = word_timings[i]
+        line_end = word_timings[i + 1][0] if i + 1 < len(word_timings) else entry_end
+
+        word_dur_ms = max(1, int((cur_end - cur_start) * 1000))
+        rise = min(400, word_dur_ms // 4)
+        fall = min(400, word_dur_ms // 4)
+
+        parts = []
+        # Wir laufen nur bis zum aktuellen Wort (i + 1), zukünftige Wörter werden ignoriert
+        for j in range(i + 1):
+            if j < i:
+                # Vorherige Wörter (stehen bereits fest da)
+                parts.append(rf"{{\k2}}{content_words[j]}")
+            else:
+                # Das brandneue, aktuelle Wort (poppt mit Skalierung auf)
+                parts.append(
+                    rf"{{\k2}}"
+                    rf"{{\t(0,{rise},\fscx106\fscy106)"
+                    rf"\t({word_dur_ms - fall},{word_dur_ms},\fscx100\fscy100)}}"
+                    rf"{content_words[j]}"
+                )
+
+        line_text = " ".join(parts)
+        result.append((line_text, cur_start, line_end))
+
+    return result
 
 
 def normalize(word: str) -> str:
@@ -474,36 +500,34 @@ def build_ass(
                 for k, v in ann.items():
                     semantic_content[int(k) + offset + 1] = v
 
-        highlighted = annotate_highlights(e.text, semantic_content)
-        txt = wrap_ass_text(highlighted if highlighted else e.text, width, font_size)
-
-        # Per-word karaoke + fscx/fscy animation (word-level timing)
         wa_for_entry = (
             [wa for wa in word_alignments if wa.get("ayah") in verse_nums]
             if word_alignments
             else []
         )
-        txt = _ass_word_tags(txt, start, end, wa_for_entry)
 
-        x, y = (
-            int(width * 0.5),
-            int(height * (0.72 if (txt.count(r"\N") + 1) == 5 else 0.75)),
-        )
+        x = int(width * 0.5)
+        y = int(height * 0.75)
 
         if i == 0 and treat_first_as_header:
+            highlighted = annotate_highlights(e.text, semantic_content)
+            txt = wrap_ass_text(
+                highlighted if highlighted else e.text, width, font_size
+            )
+            header_text = karaoke_reveal_words(txt)
             header_font_size = int(font_size * 1.25)
             tags = rf"\an5\pos({x},{int(height * 0.7)})\fad(200,200)\fs{header_font_size}\b1\c&H00FFFFFF&\3c&H00000000&\bord1\blur0"
             events.append(
-                f"Dialogue: 0,{sec_to_ass_time(start)},{sec_to_ass_time(end)},Overlay,,0,0,0,,{{{tags}}}{txt}"
+                f"Dialogue: 0,{sec_to_ass_time(start)},{sec_to_ass_time(end)},Overlay,,0,0,0,,{{{tags}}}{header_text}"
             )
             continue
 
-        line_count = txt.count(r"\N") + 1
-        y_adjusted = y + (line_height // 2 if line_count >= 5 else 0)
-        tags = rf"\an5\pos({x},{y_adjusted})\fad(120,150)\bord1\blur0"
-        events.append(
-            f"Dialogue: 0,{sec_to_ass_time(start)},{sec_to_ass_time(end)},Overlay,,0,0,0,,{{{tags}}}{txt}"
-        )
+        word_lines = _progressive_word_lines(e.text, start, end, wa_for_entry)
+        for line_text, w_start, w_end in word_lines:
+            line_tags = rf"\an5\pos({x},{y})\fad(80,100)\bord1\blur0"
+            events.append(
+                f"Dialogue: 0,{sec_to_ass_time(w_start)},{sec_to_ass_time(w_end)},Overlay,,0,0,0,,{{{line_tags}}}{line_text}"
+            )
 
     ass = [
         "[Script Info]",
@@ -559,7 +583,9 @@ def main(argv: Optional[List[str]] = None):
     if word_align_path.exists():
         word_alignments = json.loads(word_align_path.read_text(encoding="utf-8"))
 
-    ass_text = build_ass(file_name, entries, width, height, duration, word_alignments=word_alignments)
+    ass_text = build_ass(
+        file_name, entries, width, height, duration, word_alignments=word_alignments
+    )
     args.output.write_text(ass_text, encoding="utf-8")
     print(args.output)
 

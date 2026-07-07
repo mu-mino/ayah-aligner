@@ -217,7 +217,6 @@ def load_model(
         compute_type=compute_type,
         language=WHISPER_LANGUAGE,
         asr_options=ASR_OPTIONS,
-        vad_options=VAD_OPTIONS,
     )
 
 

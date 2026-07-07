@@ -220,49 +220,72 @@ def _progressive_word_lines(
     )
 
     wrapped_lines = text.split("\n")
-    word_line_pairs = []
+    word_entries = []
     for li, raw_line in enumerate(wrapped_lines):
         if not raw_line.strip():
             continue
         tokens = raw_line.split()
-        content = [t for t in tokens if not re.match(r"^\d+:$", t)]
-        for w in content:
-            word_line_pairs.append((w, li))
+        current_verse = None
+        pos_in_verse = 0
+        for t in tokens:
+            m = re.match(r"^(\d+):$", t)
+            if m:
+                current_verse = int(m.group(1))
+                pos_in_verse = 0
+            else:
+                word_entries.append((t, li, current_verse, pos_in_verse))
+                pos_in_verse += 1
 
-    if not word_line_pairs:
+    if not word_entries:
         return []
 
-    content_words = [p[0] for p in word_line_pairs]
-    num_words = len(content_words)
+    num_words = len(word_entries)
 
     if not aligns_sorted:
         lines_text = []
         for li in range(len(wrapped_lines)):
-            words_in_line = [w for w, l in word_line_pairs if l == li]
+            words_in_line = [w for w, l, v, p in word_entries if l == li]
             if words_in_line:
                 lines_text.append(" ".join(rf"{{\k2}}{w}" for w in words_in_line))
         full_text = r"\N".join(lines_text)
         return [(full_text, entry_start, entry_end)]
 
-    word_timings: List[Tuple[float, float]] = []
-    for i, _ in enumerate(content_words):
-        if i < len(aligns_sorted):
-            word_timings.append((aligns_sorted[i]["start"], aligns_sorted[i]["end"]))
+    timing_lookup = {}
+    for wa in aligns_sorted:
+        timing_lookup[(wa["ayah"], wa["idx"])] = (wa["start"], wa["end"])
+
+    word_timings: List[Optional[Tuple[float, float]]] = []
+    for word, li, verse, pos in word_entries:
+        key = (verse, pos) if verse is not None else None
+        if key and key in timing_lookup:
+            word_timings.append(timing_lookup[key])
         else:
-            last_wa = aligns_sorted[-1]
-            overflow = len(content_words) - len(aligns_sorted)
-            slots = 1 + overflow
-            slot_dur = (last_wa["end"] - last_wa["start"]) / max(1, slots)
-            slot_idx = i - (len(aligns_sorted) - 1)
-            word_timings.append(
-                (
-                    last_wa["start"] + slot_idx * slot_dur,
-                    last_wa["start"] + (slot_idx + 1) * slot_dur,
-                )
-            )
+            word_timings.append(None)
+
+    i = 0
+    while i < num_words:
+        if word_timings[i] is not None:
+            i += 1
+            continue
+        j = i
+        while j < num_words and word_timings[j] is None:
+            j += 1
+        prev_end = entry_start
+        if i > 0 and word_timings[i - 1] is not None:
+            prev_end = word_timings[i - 1][1]
+        next_start = entry_end
+        if j < num_words and word_timings[j] is not None:
+            next_start = word_timings[j][0]
+        gap = next_start - prev_end
+        count = j - i
+        for k in range(count):
+            t_start = prev_end + (gap * k) / count
+            t_end = prev_end + (gap * (k + 1)) / count
+            word_timings[i + k] = (t_start, t_end)
+        i = j
 
     result: List[Tuple[str, float, float]] = []
-    for i, word in enumerate(content_words):
+    for i, (word, li, verse, pos) in enumerate(word_entries):
         cur_start, cur_end = word_timings[i]
         line_end = word_timings[i + 1][0] if i + 1 < num_words else entry_end
 
@@ -271,9 +294,9 @@ def _progressive_word_lines(
         fall = min(400, word_dur_ms // 4)
 
         lines_visible = []
-        for li in range(len(wrapped_lines)):
+        for li_w in range(len(wrapped_lines)):
             words_in_this_line = [
-                (j, w) for j, (w, l) in enumerate(word_line_pairs[:i + 1]) if l == li
+                (j, w) for j, (w, l, v, p) in enumerate(word_entries[:i + 1]) if l == li_w
             ]
             if not words_in_this_line:
                 continue

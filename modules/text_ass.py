@@ -283,8 +283,10 @@ def _progressive_word_lines(
                     parts.append(rf"{{\k2}}{w}")
                 else:
                     parts.append(
-                        rf"{{\k2}}"
-                        rf"{{\t(0,{rise},\fscx106\fscy106)"
+                        rf"{{\alpha&HFF&}}"
+                        rf"{{\k2"
+                        rf"\t(0,80,\alpha&H00&)"
+                        rf"\t(0,{rise},\fscx106\fscy106)"
                         rf"\t({word_dur_ms - fall},{word_dur_ms},\fscx100\fscy100)}}"
                         rf"{w}"
                     )
@@ -536,7 +538,7 @@ def build_ass(
 
         word_lines = _progressive_word_lines(wrapped, start, end, wa_for_entry)
         for line_text, w_start, w_end in word_lines:
-            line_tags = rf"\an5\pos({x},{y_adjusted})\fad(80,100)\bord1\blur0"
+            line_tags = rf"\an5\pos({x},{y_adjusted})\bord1\blur0"
             events.append(
                 f"Dialogue: 0,{sec_to_ass_time(w_start)},{sec_to_ass_time(w_end)},Overlay,,0,0,0,,{{{line_tags}}}{line_text}"
             )

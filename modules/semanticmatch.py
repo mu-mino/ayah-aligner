@@ -240,15 +240,18 @@ def _fetch_verse_words(surah: int, ayah: int) -> list:
     return words
 
 
-def _word_to_translation(
-    arabic_word: str, verse_words: list
-) -> Tuple[str, int]:
-    """
-    Findet das beste Match für ein arabisches Wort in der Vers-Wortliste und
-    gibt (englische Übersetzung, Index in verse_words) zurück.
-    Bei unzureichendem Match (Score < WORD_MATCH_TOLERANCE) wird ("", -1) zurückgegeben;
-    _fill_gaps deckt die Lücke später ab.
-    """
+def _word_to_translation(arabic_word: str, verse_words: list) -> Tuple[str, int]:
+    chunk_stems = _get_stems(arabic_word)
+
+    for idx, w in enumerate(verse_words):
+        verse_stems = _get_stems(w["text_uthmani"])
+        if chunk_stems & verse_stems:
+            t = w.get("translation", {})
+            text = t.get("text", "") if isinstance(t, dict) else ""
+            if re.match(r"^\(\d+\)$", text.strip()):
+                return ("", -1)
+            return (text.strip(), idx)
+
     norm_word = _normalize_arabic(arabic_word)
     best_score = 0.0
     best_idx = -1
@@ -267,44 +270,9 @@ def _word_to_translation(
 
     t = best_match.get("translation", {})
     text = t.get("text", "") if isinstance(t, dict) else ""
+    if re.match(r"^\(\d+\)$", text.strip()):
+        return ("", -1)
     return (text.strip(), best_idx)
-
-
-def _fix_monotonic_indices(
-    matched: List[Tuple[str, int]], verse_words: list
-) -> List[Tuple[str, int]]:
-    """
-    Korrigiert die gematchten Indices pro Chunk auf einen monoton steigenden
-    Durchlauf: jeder Index >= dem vorherigen.
-    Ausreisser (zurückfallende Indices durch wiederholte Wörter) werden durch
-    den nächsthöheren Index aus der Lookup-Tabelle ersetzt.
-    """
-    from collections import defaultdict
-
-    lookup: dict[str, list[int]] = defaultdict(list)
-    for idx, vw in enumerate(verse_words):
-        lookup[_normalize_arabic(vw["text_uthmani"])].append(idx)
-
-    corrected = []
-    last_valid = -1
-    for word, orig_idx in matched:
-        if orig_idx >= last_valid:
-            corrected.append((word, orig_idx))
-            last_valid = orig_idx
-        else:
-            candidates = [
-                i
-                for i in lookup.get(_normalize_arabic(word), [])
-                if i > last_valid
-            ]
-            if candidates:
-                new_idx = min(candidates)
-                corrected.append((word, new_idx))
-                last_valid = new_idx
-            else:
-                corrected.append((word, orig_idx))
-                last_valid = max(last_valid, orig_idx)
-    return corrected
 
 
 nlp = spacy.blank("en")
@@ -450,6 +418,7 @@ def _fill_gaps(results: List[MatchResult], verse_text: str) -> None:
             prev.span.end = curr.span.start
             prev.span.text = verse_text[prev.span.start : prev.span.end]
 
+
 # ---------------------------------------------------------------------------
 # Guard
 # ---------------------------------------------------------------------------
@@ -573,19 +542,13 @@ def run_matching(
 
     for chunk in chunks:
         text = chunk.raw_text.split()
-        matched_pairs: List[Tuple[str, int]] = []
+        matched_pairs: List[Tuple[str, str, int]] = []
         for txt in text:
-            _, idx = _word_to_translation(txt, verse_words)
-            matched_pairs.append((txt, idx))
+            translation, idx = _word_to_translation(txt, verse_words)
+            if translation:
+                matched_pairs.append((txt, translation, idx))
 
-        matched_pairs = _fix_monotonic_indices(matched_pairs, verse_words)
-        translations = []
-        for _, idx in matched_pairs:
-            if idx >= 0:
-                t = verse_words[idx].get("translation", {})
-                text_val = t.get("text", "") if isinstance(t, dict) else ""
-                translations.append(text_val.strip())
-
+        translations = [t for _, t, _ in matched_pairs]
         query = " ".join(translations)
         char_start, char_end, span_text, score = find_semantic_span(
             query, session.verse_text
@@ -598,8 +561,10 @@ def run_matching(
             word_start = chunk.window.start_sec + (i / n_words) * chunk_duration
             word_end = chunk.window.start_sec + ((i + 1) / n_words) * chunk_duration
             en_word = translations[i] if i < len(translations) else ""
-            idx = matched_pairs[i][1] if i < len(matched_pairs) else -1
-            word_alignments.append((ar_word, en_word, round(word_start, 3), round(word_end, 3), idx))
+            idx = matched_pairs[i][2] if i < len(matched_pairs) else -1
+            word_alignments.append(
+                (ar_word, en_word, round(word_start, 3), round(word_end, 3), idx)
+            )
 
         session.results.append(
             MatchResult(

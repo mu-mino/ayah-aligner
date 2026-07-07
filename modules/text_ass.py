@@ -208,38 +208,42 @@ def karaoke_reveal_words(text: str) -> str:
     return r"\N".join(rendered_lines)
 
 
-import re
-from typing import List, Tuple
-
-
 def _progressive_word_lines(
     text: str,
     entry_start: float,
     entry_end: float,
     word_aligns: List[dict],
 ) -> List[Tuple[str, float, float]]:
-    """Build progressive per-word dialogue lines.
-
-    Each line adds one new word (previous words stay, new word has \t scale).
-    Future words are NOT visible yet.
-    """
     aligns_sorted = sorted(
         [wa for wa in word_aligns if wa.get("en")],
         key=lambda x: (x.get("ayah", 0), x.get("idx", 0)),
     )
 
-    tokens = text.split()
-    content_words = [t for t in tokens if not re.match(r"^\d+:$", t)]
-    if not content_words:
+    wrapped_lines = text.split("\n")
+    word_line_pairs = []
+    for li, raw_line in enumerate(wrapped_lines):
+        if not raw_line.strip():
+            continue
+        tokens = raw_line.split()
+        content = [t for t in tokens if not re.match(r"^\d+:$", t)]
+        for w in content:
+            word_line_pairs.append((w, li))
+
+    if not word_line_pairs:
         return []
 
-    # No alignments at all → single line without scale
-    if not aligns_sorted:
-        return [
-            (f" ".join(rf"{{\k2}}{w}" for w in content_words), entry_start, entry_end)
-        ]
+    content_words = [p[0] for p in word_line_pairs]
+    num_words = len(content_words)
 
-    # Build per-word timings
+    if not aligns_sorted:
+        lines_text = []
+        for li in range(len(wrapped_lines)):
+            words_in_line = [w for w, l in word_line_pairs if l == li]
+            if words_in_line:
+                lines_text.append(" ".join(rf"{{\k2}}{w}" for w in words_in_line))
+        full_text = r"\N".join(lines_text)
+        return [(full_text, entry_start, entry_end)]
+
     word_timings: List[Tuple[float, float]] = []
     for i, _ in enumerate(content_words):
         if i < len(aligns_sorted):
@@ -260,28 +264,33 @@ def _progressive_word_lines(
     result: List[Tuple[str, float, float]] = []
     for i, word in enumerate(content_words):
         cur_start, cur_end = word_timings[i]
-        line_end = word_timings[i + 1][0] if i + 1 < len(word_timings) else entry_end
+        line_end = word_timings[i + 1][0] if i + 1 < num_words else entry_end
 
         word_dur_ms = max(1, int((cur_end - cur_start) * 1000))
         rise = min(400, word_dur_ms // 4)
         fall = min(400, word_dur_ms // 4)
 
-        parts = []
-        # Wir laufen nur bis zum aktuellen Wort (i + 1), zukünftige Wörter werden ignoriert
-        for j in range(i + 1):
-            if j < i:
-                # Vorherige Wörter (stehen bereits fest da)
-                parts.append(rf"{{\k2}}{content_words[j]}")
-            else:
-                # Das brandneue, aktuelle Wort (poppt mit Skalierung auf)
-                parts.append(
-                    rf"{{\k2}}"
-                    rf"{{\t(0,{rise},\fscx106\fscy106)"
-                    rf"\t({word_dur_ms - fall},{word_dur_ms},\fscx100\fscy100)}}"
-                    rf"{content_words[j]}"
-                )
+        lines_visible = []
+        for li in range(len(wrapped_lines)):
+            words_in_this_line = [
+                (j, w) for j, (w, l) in enumerate(word_line_pairs[:i + 1]) if l == li
+            ]
+            if not words_in_this_line:
+                continue
+            parts = []
+            for j, w in words_in_this_line:
+                if j < i:
+                    parts.append(rf"{{\k2}}{w}")
+                else:
+                    parts.append(
+                        rf"{{\k2}}"
+                        rf"{{\t(0,{rise},\fscx106\fscy106)"
+                        rf"\t({word_dur_ms - fall},{word_dur_ms},\fscx100\fscy100)}}"
+                        rf"{w}"
+                    )
+            lines_visible.append(" ".join(parts))
 
-        line_text = " ".join(parts)
+        line_text = r"\N".join(lines_visible)
         result.append((line_text, cur_start, line_end))
 
     return result
@@ -500,21 +509,24 @@ def build_ass(
                 for k, v in ann.items():
                     semantic_content[int(k) + offset + 1] = v
 
+        highlighted = annotate_highlights(e.text, semantic_content)
+        wrapped = wrap_ass_text(
+            highlighted if highlighted else e.text, width, font_size
+        )
+
         wa_for_entry = (
             [wa for wa in word_alignments if wa.get("ayah") in verse_nums]
             if word_alignments
             else []
         )
 
+        line_count = wrapped.count("\n") + 1
         x = int(width * 0.5)
-        y = int(height * 0.75)
+        y = int(height * (0.72 if line_count == 5 else 0.75))
+        y_adjusted = y + (line_height // 2 if line_count >= 5 else 0)
 
         if i == 0 and treat_first_as_header:
-            highlighted = annotate_highlights(e.text, semantic_content)
-            txt = wrap_ass_text(
-                highlighted if highlighted else e.text, width, font_size
-            )
-            header_text = karaoke_reveal_words(txt)
+            header_text = karaoke_reveal_words(wrapped)
             header_font_size = int(font_size * 1.25)
             tags = rf"\an5\pos({x},{int(height * 0.7)})\fad(200,200)\fs{header_font_size}\b1\c&H00FFFFFF&\3c&H00000000&\bord1\blur0"
             events.append(
@@ -522,9 +534,9 @@ def build_ass(
             )
             continue
 
-        word_lines = _progressive_word_lines(e.text, start, end, wa_for_entry)
+        word_lines = _progressive_word_lines(wrapped, start, end, wa_for_entry)
         for line_text, w_start, w_end in word_lines:
-            line_tags = rf"\an5\pos({x},{y})\fad(80,100)\bord1\blur0"
+            line_tags = rf"\an5\pos({x},{y_adjusted})\fad(80,100)\bord1\blur0"
             events.append(
                 f"Dialogue: 0,{sec_to_ass_time(w_start)},{sec_to_ass_time(w_end)},Overlay,,0,0,0,,{{{line_tags}}}{line_text}"
             )

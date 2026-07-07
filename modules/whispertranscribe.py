@@ -60,6 +60,8 @@ SILENCE_THRESHOLD: float = 0.005  # Amplitudenschwelle für Stille-Erkennung
 MAX_TRANSCRIBE_RETRIES: int = 3  # retries on poor timestamp coverage
 COVERAGE_TOLERANCE: float = 2.0  # seconds gap allowed at start/end before retry
 
+USE_MODAL: bool = True  # True → Whisper-Inferenz auf Modal (GPU serverless)
+
 
 # ---------------------------------------------------------------------------
 # Datenstrukturen
@@ -350,31 +352,38 @@ def stamp_per_segment_transcription(
     return segments_with_absolute_timestamps
 
 
-def transcribe_chunk(
+def _build_vad_merged(audio: np.ndarray, vad_model=None, vad_params=None) -> list:
+    """Pyannote-VAD auf dem Audio ausführen → gemergte VAD-Segmente."""
+    from whisperx.audio import SAMPLE_RATE
+    from whisperx.vads import Pyannote
+
+    if vad_model is None:
+        import torch
+        local_vad_opts = {k: v for k, v in VAD_OPTIONS.items()}
+        vad_model = Pyannote(torch.device("cpu"), token=None, **local_vad_opts)
+        vad_params = VAD_OPTIONS
+
+    waveform = Pyannote.preprocess_audio(audio)
+    vad_segments = vad_model({"waveform": waveform, "sample_rate": SAMPLE_RATE})
+    merge_fn = (
+        vad_model.merge_chunks
+        if hasattr(vad_model, "merge_chunks")
+        else Pyannote.merge_chunks
+    )
+    return merge_fn(
+        vad_segments,
+        chunk_size=30,
+        onset=vad_params.get("vad_onset", 0.5) if vad_params else 0.5,
+        offset=vad_params.get("vad_offset", 0.363) if vad_params else 0.363,
+    )
+
+
+def _transcribe_chunk_local(
     model,
     video_path: Path,
     window: FrameWindow,
 ) -> ChunkTranscription:
-    """
-    Transkribiert ein einzelnes videowindow-Häppchen.
-
-    Parameters
-    ----------
-    model:
-        Geladenes WhisperX-Modell (von load_model()).
-    video_path:
-        Pfad zum Quell-Video.
-    window:
-        Das FrameWindow, dessen Audio transkribiert werden soll.
-
-    Returns
-    -------
-    ChunkTranscription mit Segmenten und vollständigem Text.
-    """
-    cached = _load_whisper_cache(video_path, window)
-    if cached is not None:
-        return cached
-
+    """Lokale Transkription (VAD + Whisper über whisperx-Pipeline)."""
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
         tmp_path = Path(tmp.name)
 
@@ -386,25 +395,7 @@ def transcribe_chunk(
             tmp_path,
         )
         audio = _preprocess_audio(tmp_path)
-
-        # Pyannote-VAD wie whisperx-Pipeline, aber wir behalten Wort-Zeitstempel
-        from whisperx.audio import SAMPLE_RATE
-        from whisperx.vads import Pyannote
-
-        waveform = Pyannote.preprocess_audio(audio)
-        vad_segments = model.vad_model(
-            {"waveform": waveform, "sample_rate": SAMPLE_RATE}
-        )
-        if hasattr(model.vad_model, "merge_chunks"):
-            merge_chunks = model.vad_model.merge_chunks
-        else:
-            merge_chunks = Pyannote.merge_chunks
-        merged = merge_chunks(
-            vad_segments,
-            chunk_size=30,
-            onset=model._vad_params.get("vad_onset", 0.5),
-            offset=model._vad_params.get("vad_offset", 0.363),
-        )
+        merged = _build_vad_merged(audio, model.vad_model, model._vad_params)
     finally:
         tmp_path.unlink(missing_ok=True)
 
@@ -446,14 +437,110 @@ def transcribe_chunk(
                         word_timings.append((wtxt, round(wstart, 3), round(wend, 3)))
 
     raw_text = " ".join(s.text for s in segments)
-    transcription = ChunkTranscription(
+    return ChunkTranscription(
         window=window,
         segments=segments,
         raw_text=raw_text,
         word_timings=word_timings,
     )
-    _save_whisper_cache(video_path, transcription)
-    return transcription
+
+
+def _transcribe_chunk_modal(
+    video_path: Path,
+    window: FrameWindow,
+) -> ChunkTranscription:
+    """Transkription mit Modal (VAD lokal, Whisper-Inferenz auf Modal-GPU)."""
+    from modules.whisper_modal import transcribe_audio_chunk
+
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+        tmp_path = Path(tmp.name)
+
+    try:
+        _extract_audio_chunk(
+            video_path,
+            window.start_sec,
+            window.end_sec + SEGMENT_END_TOLERANCE,
+            tmp_path,
+        )
+        audio = _preprocess_audio(tmp_path)
+        merged = _build_vad_merged(audio)
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+    offset = window.start_sec
+    segments: List[TranscriptSegment] = []
+    word_timings: List[Tuple[str, float, float]] = []
+    for vs in merged:
+        f1 = int(vs["start"] * AUDIO_SAMPLE_RATE)
+        f2 = int(vs["end"] * AUDIO_SAMPLE_RATE)
+        seg_audio = audio[f1:f2]
+        result = transcribe_audio_chunk.remote(
+            seg_audio.tobytes(),
+            language=WHISPER_LANGUAGE,
+        )
+        for seg in result["segments"]:
+            start = seg["start"] + vs["start"] + offset
+            end = seg["end"] + vs["start"] + offset + SEGMENT_END_TOLERANCE
+            segments.append(
+                TranscriptSegment(
+                    start=start,
+                    end=end,
+                    text=seg["text"],
+                    stamp=_format_segment_stamp(start, end),
+                )
+            )
+            for w in seg["words"]:
+                wstart = w["start"] + vs["start"] + offset
+                wend = w["end"] + vs["start"] + offset
+                if w["word"]:
+                    word_timings.append((w["word"], round(wstart, 3), round(wend, 3)))
+
+    raw_text = " ".join(s.text for s in segments)
+    return ChunkTranscription(
+        window=window,
+        segments=segments,
+        raw_text=raw_text,
+        word_timings=word_timings,
+    )
+
+
+def transcribe_chunk(
+    model=None,
+    video_path: Path = None,
+    window: FrameWindow = None,
+) -> ChunkTranscription:
+    """
+    Transkribiert ein einzelnes videowindow-Häppchen.
+
+    Wenn USE_MODAL=True wird die GPU-Inferenz auf Modal ausgelagert
+    (VAD bleibt lokal). Andernfalls wird das lokale whisperx-Modell verwendet.
+
+    Parameters
+    ----------
+    model:
+        Geladenes WhisperX-Modell (von load_model()). Nur nötig wenn USE_MODAL=False.
+    video_path:
+        Pfad zum Quell-Video.
+    window:
+        Das FrameWindow, dessen Audio transkribiert werden soll.
+
+    Returns
+    -------
+    ChunkTranscription mit Segmenten und vollständigem Text.
+    """
+    cached = _load_whisper_cache(video_path, window)
+    if cached is not None:
+        return cached
+
+    if USE_MODAL:
+        result = _transcribe_chunk_modal(video_path, window)
+    else:
+        if model is None:
+            raise ValueError("model required when USE_MODAL=False")
+        result = _transcribe_chunk_local(model, video_path, window)
+
+    _save_whisper_cache(video_path, result)
+    return result
 
 
 def transcribe_chunks(
@@ -485,11 +572,11 @@ def transcribe_chunks(
     if not windows:
         return []
 
-    if model is None:
+    if model is None and not USE_MODAL:
         model = load_model(device=device)
 
     results: List[ChunkTranscription] = []
     for window in windows:
-        results.append(transcribe_chunk(model, video_path, window))
+        results.append(transcribe_chunk(model=model, video_path=video_path, window=window))
 
     return results

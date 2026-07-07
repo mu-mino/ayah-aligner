@@ -240,6 +240,31 @@ def _fetch_verse_words(surah: int, ayah: int) -> list:
     return words
 
 
+_CAMEL_DB = None
+_CAMEL_ANALYZER = None
+
+
+def _get_stems(word: str) -> set:
+    global _CAMEL_DB, _CAMEL_ANALYZER
+    if _CAMEL_ANALYZER is None:
+        from camel_tools.morphology.analyzer import Analyzer
+        from camel_tools.morphology.database import MorphologyDB
+
+        db_path = "/home/muhammed-emin-eser/.camel_tools/data/morphology_db/calima-msa-r13/morphology.db"
+        _CAMEL_DB = MorphologyDB(db_path)
+        _CAMEL_ANALYZER = Analyzer(_CAMEL_DB)
+
+    analyses = _CAMEL_ANALYZER.analyze(word)
+    stems = set()
+    for a in analyses:
+        stem = a.get("stem", "")
+        if stem:
+            stems.add(stem)
+    if not stems:
+        stems.add(word)
+    return stems
+
+
 def _word_to_translation(arabic_word: str, verse_words: list) -> Tuple[str, int]:
     chunk_stems = _get_stems(arabic_word)
 
@@ -554,12 +579,16 @@ def run_matching(
             query, session.verse_text
         )
 
+        wt = chunk.word_timings
         chunk_duration = chunk.window.end_sec - chunk.window.start_sec
         n_words = len(text)
         word_alignments = []
         for i, ar_word in enumerate(text):
-            word_start = chunk.window.start_sec + (i / n_words) * chunk_duration
-            word_end = chunk.window.start_sec + ((i + 1) / n_words) * chunk_duration
+            if i < len(wt):
+                word_start, word_end = wt[i][1], wt[i][2]
+            else:
+                word_start = chunk.window.start_sec + (i / n_words) * chunk_duration
+                word_end = chunk.window.start_sec + ((i + 1) / n_words) * chunk_duration
             en_word = translations[i] if i < len(translations) else ""
             idx = matched_pairs[i][2] if i < len(matched_pairs) else -1
             word_alignments.append(

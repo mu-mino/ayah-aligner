@@ -18,7 +18,7 @@ import subprocess
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 import numpy as np
 
@@ -42,6 +42,7 @@ SEGMENT_END_TOLERANCE: float = 1.5  # Sekunden, die an segment.end addiert werde
 ASR_OPTIONS: dict = {
     "no_speech_threshold": 1.0,
     "initial_prompt": "بسم الله الرحمن الرحيم",
+    "word_timestamps": True,
 }
 VAD_OPTIONS: dict = {
     "vad_onset": 0.1,
@@ -83,11 +84,13 @@ class ChunkTranscription:
     window      : das zugehörige FrameWindow [start_sec, end_sec]
     segments    : von WhisperX erkannte Satz-/Wort-Segmente
     raw_text    : vollständiger Transkripttext des Fensters
+    word_timings: [(wort, start, end), …] von Whisper erkannte Wort-Zeitstempel
     """
 
     window: FrameWindow
     segments: List[TranscriptSegment] = field(default_factory=list)
     raw_text: str = ""
+    word_timings: List[Tuple[str, float, float]] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -255,8 +258,14 @@ def _load_whisper_cache(
                 stamp=s.get("stamp", _format_segment_stamp(start, end)),
             )
         )
+    word_timings = [
+        (w["word"], w["start"], w["end"]) for w in data.get("word_timings", [])
+    ]
     return ChunkTranscription(
-        window=window, segments=segments, raw_text=data["raw_text"]
+        window=window,
+        segments=segments,
+        raw_text=data["raw_text"],
+        word_timings=word_timings,
     )
 
 
@@ -269,6 +278,9 @@ def _save_whisper_cache(video_path: Path, result: ChunkTranscription) -> None:
             for s in result.segments
         ],
         "raw_text": result.raw_text,
+        "word_timings": [
+            {"word": w, "start": s, "end": e} for w, s, e in result.word_timings
+        ],
     }
     cache_file.write_text(
         json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -374,39 +386,71 @@ def transcribe_chunk(
             tmp_path,
         )
         audio = _preprocess_audio(tmp_path)
-        audio_duration = len(audio) / AUDIO_SAMPLE_RATE
 
-        result = model.transcribe(audio, language=WHISPER_LANGUAGE)
-        for _ in range(MAX_TRANSCRIBE_RETRIES):
-            segs = result.get("segments", [])
-            if (
-                segs
-                and segs[0]["start"] <= COVERAGE_TOLERANCE
-                and segs[-1]["end"] >= audio_duration - COVERAGE_TOLERANCE
-            ):
-                break
-            result = model.transcribe(audio, language=WHISPER_LANGUAGE)
+        # Pyannote-VAD wie whisperx-Pipeline, aber wir behalten Wort-Zeitstempel
+        from whisperx.audio import SAMPLE_RATE
+        from whisperx.vads import Pyannote
+
+        waveform = Pyannote.preprocess_audio(audio)
+        vad_segments = model.vad_model(
+            {"waveform": waveform, "sample_rate": SAMPLE_RATE}
+        )
+        if hasattr(model.vad_model, "merge_chunks"):
+            merge_chunks = model.vad_model.merge_chunks
+        else:
+            merge_chunks = Pyannote.merge_chunks
+        merged = merge_chunks(
+            vad_segments,
+            chunk_size=30,
+            onset=model._vad_params.get("vad_onset", 0.5),
+            offset=model._vad_params.get("vad_offset", 0.363),
+        )
     finally:
         tmp_path.unlink(missing_ok=True)
 
-    # Zeitstempel auf absolute Video-Zeit umrechnen (WhisperX gibt Chunk-relative Zeiten zurück)
     offset = window.start_sec
     segments: List[TranscriptSegment] = []
-    for seg in result.get("segments", []):
-        start = seg["start"] + offset
-        end = seg["end"] + offset + SEGMENT_END_TOLERANCE
-        segments.append(
-            TranscriptSegment(
-                start=start,
-                end=end,
-                text=seg["text"].strip(),
-                stamp=_format_segment_stamp(start, end),
-            )
+    word_timings: List[Tuple[str, float, float]] = []
+    for vs in merged:
+        f1 = int(vs["start"] * AUDIO_SAMPLE_RATE)
+        f2 = int(vs["end"] * AUDIO_SAMPLE_RATE)
+        seg_audio = audio[f1:f2]
+        fw_segments, _ = model.model.transcribe(
+            seg_audio,
+            language=WHISPER_LANGUAGE,
+            beam_size=5,
+            word_timestamps=True,
+            vad_filter=False,
+            condition_on_previous_text=False,
+            no_speech_threshold=1.0,
+            initial_prompt="بسم الله الرحمن الرحيم",
+            max_initial_timestamp=0.0,
         )
+        for seg in fw_segments:
+            start = seg.start + vs["start"] + offset
+            end = seg.end + vs["start"] + offset + SEGMENT_END_TOLERANCE
+            segments.append(
+                TranscriptSegment(
+                    start=start,
+                    end=end,
+                    text=seg.text.strip(),
+                    stamp=_format_segment_stamp(start, end),
+                )
+            )
+            if seg.words:
+                for w in seg.words:
+                    wtxt = w.word.strip()
+                    wstart = w.start + vs["start"] + offset
+                    wend = w.end + vs["start"] + offset
+                    if wtxt:
+                        word_timings.append((wtxt, round(wstart, 3), round(wend, 3)))
 
     raw_text = " ".join(s.text for s in segments)
     transcription = ChunkTranscription(
-        window=window, segments=segments, raw_text=raw_text
+        window=window,
+        segments=segments,
+        raw_text=raw_text,
+        word_timings=word_timings,
     )
     _save_whisper_cache(video_path, transcription)
     return transcription

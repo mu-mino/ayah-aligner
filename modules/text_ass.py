@@ -590,26 +590,50 @@ def build_ass(
                 f"Dialogue: 0,{sec_to_ass_time(w_start)},{sec_to_ass_time(w_end)},Overlay,,0,0,0,,{{{line_tags}}}{line_text}"
             )
 
-    # Post-processing: fill render pauses > 0.5s by extending previous event
+    # Post-processing: fill render pauses > 0.5s and resolve overlaps
     ts_pairs = []
     for ev in events:
         m = re.match(r"Dialogue: \d,([^,]+),([^,]+),", ev)
         if m:
             ts_pairs.append((_ts2sec(m.group(1)), _ts2sec(m.group(2)), ev))
     ts_pairs.sort(key=lambda x: x[0])
+
+    # Phase 1 — fill pauses > 0.5s by extending previous event end
     for i in range(1, len(ts_pairs)):
         gap = ts_pairs[i][0] - ts_pairs[i - 1][1]
         if gap > 0.5:
+            new_end = ts_pairs[i][0]
             ts_pairs[i - 1] = (
                 ts_pairs[i - 1][0],
-                ts_pairs[i][0],
+                new_end,
                 re.sub(
                     r"(Dialogue: \d,[^,]+),([^,]+)",
-                    rf"\1,{sec_to_ass_time(ts_pairs[i][0])}",
+                    rf"\1,{sec_to_ass_time(new_end)}",
                     ts_pairs[i - 1][2],
                     count=1,
                 ),
             )
+
+    # Phase 2 — resolve overlaps: shift event start forward if it begins before previous ends
+    for i in range(1, len(ts_pairs)):
+        prev_end = ts_pairs[i - 1][1]
+        cur_start, cur_end, cur_ev = ts_pairs[i]
+        if cur_start < prev_end:
+            new_start = prev_end
+            new_end = max(cur_end, new_start + 0.01)
+            new_start_str = sec_to_ass_time(new_start)
+            new_end_str = sec_to_ass_time(new_end)
+            ts_pairs[i] = (
+                new_start,
+                new_end,
+                re.sub(
+                    r"(Dialogue: \d,)[^,]+,[^,]+",
+                    rf"\g<1>{new_start_str},{new_end_str}",
+                    cur_ev,
+                    count=1,
+                ),
+            )
+
     events = [t[2] for t in ts_pairs]
 
     ass = [

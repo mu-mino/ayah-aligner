@@ -509,6 +509,7 @@ def build_ass(
 
     only_header = len(entries_sorted) == 1
     semantic_indexes: Dict = get_annotated_text(file_name)  # verse_id: content
+    last_verse_nums: set = set()
 
     for i, e in enumerate(entries_sorted):
         start = e.start
@@ -526,6 +527,10 @@ def build_ass(
             m = re.match(r"^(\d+):$", t)
             if m:
                 verse_nums.add(int(m.group(1)))
+        if verse_nums:
+            last_verse_nums = verse_nums
+        elif last_verse_nums:
+            verse_nums = last_verse_nums
         for vn in verse_nums:
             ann = semantic_indexes.get(vn, {})
             if not ann:

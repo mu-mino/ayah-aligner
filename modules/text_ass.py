@@ -364,6 +364,15 @@ def get_annotated_text(file_name: str) -> Dict:
     return verses
 
 
+_llm_cache: Dict[str, str] = {}
+
+def _llm_cached(prompt: str) -> str:
+    if prompt not in _llm_cache:
+        output = LLM(prompt=prompt, max_tokens=10, temperature=0.0, stop="\n\n")
+        _llm_cache[prompt] = output["choices"][0]["text"].strip()
+    return _llm_cache[prompt]
+
+
 def annotate_highlights(verse, highlights: Dict):
     # 1. Zitate direkt auf nativer String-Ebene in Kursiv wandeln
     matches = re.sub(r'["\'](.*?)["\']', r"{\\i1}\1{\\i0}", verse)
@@ -389,8 +398,7 @@ def annotate_highlights(verse, highlights: Dict):
     Text: {o_part}{full_text_after_o}
     Addressed Entity:"""
 
-        output = LLM(prompt=prompt, max_tokens=10, temperature=0.0, stop="\n\n")
-        text = output["choices"][0]["text"].strip()
+        text = _llm_cached(prompt)
 
         # Wir schneiden das Subjekt aus dem Text aus, der NACH dem "O" kommt
         rest_of_text = full_text_after_o.replace(text, "", 1)

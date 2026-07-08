@@ -213,6 +213,9 @@ def _progressive_word_lines(
     entry_start: float,
     entry_end: float,
     word_aligns: List[dict],
+    font_size: int = 42,
+    video_width: int = 1356,
+    video_height: int = 638,
 ) -> List[Tuple[str, float, float]]:
     aligns_sorted = sorted(
         [wa for wa in word_aligns if wa.get("en")],
@@ -289,9 +292,7 @@ def _progressive_word_lines(
         cur_start, cur_end = word_timings[i]
         line_end = word_timings[i + 1][0] if i + 1 < num_words else entry_end
 
-        word_dur_ms = max(1, int((cur_end - cur_start) * 1000))
-        rise = min(400, word_dur_ms // 4)
-        fall = min(400, word_dur_ms // 4)
+        word_dur_cs = max(1, int((cur_end - cur_start) * 100))
 
         lines_visible = []
         for li_w in range(len(wrapped_lines)):
@@ -307,17 +308,11 @@ def _progressive_word_lines(
                 if j < i:
                     parts.append(w)
                 else:
-                    parts.append(
-                        rf"{{\alpha&HFF&}}"
-                        rf"{{\k2"
-                        rf"\t(0,80,\alpha&H00&)"
-                        rf"\t(0,{rise},\fscx97\fscy97)"
-                        rf"\t({word_dur_ms - fall},{word_dur_ms},\fscx100\fscy100)}}"
-                        rf"{w}"
-                    )
+                    parts.append(rf"{{\K{word_dur_cs}}}{w}")
             lines_visible.append(" ".join(parts))
 
         line_text = r"\N".join(lines_visible)
+        line_text = rf"\2c&H222222&" + line_text
         result.append((line_text, cur_start, line_end))
 
     return result
@@ -566,7 +561,10 @@ def build_ass(
             )
             continue
 
-        word_lines = _progressive_word_lines(wrapped, start, end, wa_for_entry)
+        word_lines = _progressive_word_lines(
+            wrapped, start, end, wa_for_entry,
+            font_size=font_size, video_width=width, video_height=height,
+        )
         for line_text, w_start, w_end in word_lines:
             line_tags = rf"\an5\pos({x},{y_adjusted})\bord1\blur0"
             events.append(

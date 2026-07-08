@@ -107,6 +107,9 @@ class WindowGroup:
 # ---------------------------------------------------------------------------
 
 
+_TRANSCRIBE_PADDING: float = 3.0  # Sekunden vor window.start_sec für Audio-Kontext
+
+
 def _transcribe_segments(
     audio_path: Path,
     window: FrameWindow,
@@ -115,13 +118,18 @@ def _transcribe_segments(
     """Separate Transkription nur für feine Segment-Grenzen.
 
     Ruft faster-whisper auf (lokal oder über Modal) mit word_timestamps=True.
+    Extrahiert _TRANSCRIBE_PADDING Sekunden vor window.start_sec, damit
+    Rezitation die kurz vor dem Fenster beginnt (z.B. Verse 8 am Fensterrand)
+    nicht abgeschnitten wird.
     """
     import tempfile
+
+    pad_start = max(0.0, window.start_sec - _TRANSCRIBE_PADDING)
 
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
         tmp_path = Path(tmp.name)
     try:
-        _extract_audio_chunk(audio_path, window.start_sec, window.end_sec, tmp_path)
+        _extract_audio_chunk(audio_path, pad_start, window.end_sec, tmp_path)
 
         if USE_MODAL:
             import whisperx
@@ -156,7 +164,7 @@ def _transcribe_segments(
     finally:
         tmp_path.unlink(missing_ok=True)
 
-    offset = window.start_sec
+    offset = pad_start
     segments = []
     for seg in segments_raw:
         if seg.get("words"):

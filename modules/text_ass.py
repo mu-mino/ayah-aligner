@@ -119,6 +119,11 @@ def sec_to_ass_time(t: float) -> str:
     return f"{int(h)}:{int(m):02d}:{int(s):02d}.{cs:02d}"
 
 
+def _ts2sec(t: str) -> float:
+    h, m, s = t.split(":")
+    return int(h) * 3600 + int(m) * 60 + float(s)
+
+
 def wrap_ass_text(text: str, video_width: int, font_size: int) -> str:
     avg_char_width = font_size * 0.44
     max_chars = max(10, int(video_width / avg_char_width))
@@ -279,7 +284,9 @@ def _progressive_word_lines(
         next_start = entry_end
         if j < num_words and word_timings[j] is not None:
             next_start = word_timings[j][0]
-        gap = max(next_start - prev_end, 0.001)
+        gap = next_start - prev_end
+        if gap <= 0:
+            gap = max(entry_end - prev_end, 0.001)
         count = j - i
         for k in range(count):
             t_start = prev_end + (gap * k) / count
@@ -296,7 +303,8 @@ def _progressive_word_lines(
     result: List[Tuple[str, float, float]] = []
     for i, (word, li, verse, pos) in enumerate(word_entries):
         cur_start, cur_end = word_timings[i]
-        line_end = max(word_timings[i + 1][0], cur_start) if i + 1 < num_words else max(entry_end, cur_start)
+        next_start = word_timings[i + 1][0] if i + 1 < num_words else entry_end
+        line_end = next_start if next_start >= cur_start + 0.01 else cur_start + 0.01
 
         word_dur_cs = max(1, int((cur_end - cur_start) * 100))
 
@@ -321,6 +329,8 @@ def _progressive_word_lines(
         line_text = rf"{{\2c&H222222&}}" + line_text
         result.append((line_text, cur_start, line_end))
 
+    if result:
+        result[-1] = (result[-1][0], result[-1][1], entry_end)
     return result
 
 
@@ -584,6 +594,28 @@ def build_ass(
             events.append(
                 f"Dialogue: 0,{sec_to_ass_time(w_start)},{sec_to_ass_time(w_end)},Overlay,,0,0,0,,{{{line_tags}}}{line_text}"
             )
+
+    # Post-processing: fill render pauses > 0.5s by extending previous event
+    ts_pairs = []
+    for ev in events:
+        m = re.match(r"Dialogue: \d,([^,]+),([^,]+),", ev)
+        if m:
+            ts_pairs.append((_ts2sec(m.group(1)), _ts2sec(m.group(2)), ev))
+    ts_pairs.sort(key=lambda x: x[0])
+    for i in range(1, len(ts_pairs)):
+        gap = ts_pairs[i][0] - ts_pairs[i - 1][1]
+        if gap > 0.5:
+            ts_pairs[i - 1] = (
+                ts_pairs[i - 1][0],
+                ts_pairs[i][0],
+                re.sub(
+                    r"(Dialogue: \d,[^,]+),([^,]+)",
+                    rf"\1,{sec_to_ass_time(ts_pairs[i][0])}",
+                    ts_pairs[i - 1][2],
+                    count=1,
+                ),
+            )
+    events = [t[2] for t in ts_pairs]
 
     ass = [
         "[Script Info]",

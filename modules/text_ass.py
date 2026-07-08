@@ -279,7 +279,7 @@ def _progressive_word_lines(
         next_start = entry_end
         if j < num_words and word_timings[j] is not None:
             next_start = word_timings[j][0]
-        gap = next_start - prev_end
+        gap = max(next_start - prev_end, 0.001)
         count = j - i
         for k in range(count):
             t_start = prev_end + (gap * k) / count
@@ -291,7 +291,7 @@ def _progressive_word_lines(
         prev_start = word_timings[i - 1][0]
         cur_start, cur_end = word_timings[i]
         if cur_start < prev_start:
-            word_timings[i] = (prev_start, max(cur_end, prev_start))
+            word_timings[i] = (cur_start, max(cur_end, cur_start + 0.001))
 
     result: List[Tuple[str, float, float]] = []
     for i, (word, li, verse, pos) in enumerate(word_entries):

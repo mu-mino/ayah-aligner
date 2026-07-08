@@ -188,6 +188,181 @@ def _load_gray(video_path: Path, window: FrameWindow):
 
 
 # ---------------------------------------------------------------------------
+# Word Alignment Resolver (Two-Phase: Harvest → Lookahead-Disambiguierung)
+# ---------------------------------------------------------------------------
+
+
+class WordAlignmentResolver:
+    """Sammelt alle validen Kandidaten pro Segment und wählt per Lookahead."""
+
+    LOOKAHEAD_WINDOW = 8
+
+    def __init__(
+        self,
+        surah: int,
+        all_word_aligns: list,
+        segment_en_map: dict,
+        seen_ayah_idx: set,
+        seen_seg_key: set,
+    ):
+        self.surah = surah
+        self.all_word_aligns = all_word_aligns
+        self.segment_en_map = segment_en_map
+        self.seen_ayah_idx = seen_ayah_idx
+        self.seen_seg_key = seen_seg_key
+
+    # ------------------------------------------------------------------
+    # Phase 1 — alle Kandidaten sammeln
+    # ------------------------------------------------------------------
+
+    def harvest(
+        self, group: "WindowGroup", segs: list
+    ) -> list:
+        """Gibt pro Segment eine Liste valider (verse, idx, en, start, end, ar)."""
+        candidates_list: list = []
+        for start, end, ar_word in segs:
+            seg_key = (start, ar_word)
+            if seg_key in self.seen_seg_key:
+                candidates_list.append([])
+                continue
+            segment_candidates: list = []
+            for verse_num, _ in group.verses:
+                try:
+                    verse_words = _fetch_verse_words(self.surah, verse_num)
+                except Exception:
+                    continue
+                en_word, idx = _word_to_translation(ar_word, verse_words)
+                if idx >= 0 and (verse_num, idx) not in self.seen_ayah_idx:
+                    segment_candidates.append(
+                        {
+                            "verse": verse_num,
+                            "idx": idx,
+                            "en": en_word,
+                            "start": start,
+                            "end": end,
+                            "ar": ar_word,
+                            "seg_key": seg_key,
+                        }
+                    )
+            candidates_list.append(segment_candidates)
+        return candidates_list
+
+    # ------------------------------------------------------------------
+    # Phase 2 — Lookahead-Disambiguierung + Commit
+    # ------------------------------------------------------------------
+
+    def resolve(self, candidates_list: list) -> None:
+        """Löst Ambiguitäten iterativ auf und committed alle Kandidaten."""
+        committed: dict = {}
+        changed = True
+        while changed:
+            changed = False
+            for i, seg_candidates in enumerate(candidates_list):
+                if i in committed:
+                    continue
+
+                valid = [
+                    c
+                    for c in seg_candidates
+                    if (c["verse"], c["idx"]) not in self.seen_ayah_idx
+                ]
+                if not valid:
+                    committed[i] = None
+                    changed = True
+                    continue
+
+                if len(valid) == 1:
+                    self._commit(valid[0])
+                    committed[i] = valid[0]
+                    changed = True
+                    continue
+
+                best = max(
+                    valid,
+                    key=lambda c: self._backward_fit(c)
+                    + self._lookahead_chain(
+                        c, candidates_list, i + 1, committed
+                    ),
+                )
+                self._commit(best)
+                committed[i] = best
+                changed = True
+
+    # ------------------------------------------------------------------
+    # Backward-Fit — passt der Kandidat in die bereits kommittierte Sequenz?
+    # ------------------------------------------------------------------
+
+    def _backward_fit(self, candidate: dict) -> float:
+        """2.0 wenn der direkte Vorgänger (same verse, idx-1) schon committed ist."""
+        cv, ci = candidate["verse"], candidate["idx"]
+        if (cv, ci - 1) in self.seen_ayah_idx:
+            return 2.0
+        return 0.0
+
+    # ------------------------------------------------------------------
+    # Lookahead — längste inkrementelle Kette ab einem Kandidaten
+    # ------------------------------------------------------------------
+
+    def _lookahead_chain(
+        self,
+        candidate: dict,
+        candidates_list: list,
+        start_idx: int,
+        committed: dict,
+    ) -> float:
+        c_v, c_i = candidate["verse"], candidate["idx"]
+        chain = 0.0
+        window = candidates_list[start_idx : start_idx + self.LOOKAHEAD_WINDOW]
+
+        for cis in window:
+            expected = [(c_v, c_i + 1), (c_v + 1, 0)]
+            found = None
+            for c in cis:
+                if (c["verse"], c["idx"]) not in self.seen_ayah_idx:
+                    if (c["verse"], c["idx"]) in expected:
+                        found = c
+                        break
+            if found is None:
+                expected_gap = [(c_v, c_i + 2), (c_v + 1, 1)]
+                for c in cis:
+                    if (c["verse"], c["idx"]) not in self.seen_ayah_idx:
+                        if (c["verse"], c["idx"]) in expected_gap:
+                            found = c
+                            chain += 0.5
+                            break
+            if found:
+                chain += 1.0
+                c_v, c_i = found["verse"], found["idx"]
+            else:
+                break
+        return chain
+
+    # ------------------------------------------------------------------
+    # Commit — übernimmt einen Kandidaten in die globalen Strukturen
+    # ------------------------------------------------------------------
+
+    def _commit(self, candidate: dict) -> None:
+        seg_key = candidate["seg_key"]
+        self.seen_seg_key.add(seg_key)
+        self.seen_ayah_idx.add((candidate["verse"], candidate["idx"]))
+
+        self.all_word_aligns.append(
+            {
+                "start": candidate["start"],
+                "end": candidate["end"],
+                "ar": candidate["ar"],
+                "en": candidate["en"],
+                "idx": candidate["idx"],
+                "ayah": candidate["verse"],
+            }
+        )
+
+        key = (candidate["start"], candidate["end"])
+        if candidate["en"] and key not in self.segment_en_map:
+            self.segment_en_map[key] = candidate["en"]
+
+
+# ---------------------------------------------------------------------------
 # Pipeline
 # ---------------------------------------------------------------------------
 
@@ -339,31 +514,17 @@ def run(
     seen_ayah_idx: set = set()
     seen_seg_key: set = set()
 
+    resolver = WordAlignmentResolver(
+        surah=surah,
+        all_word_aligns=all_word_aligns,
+        segment_en_map=segment_en_map,
+        seen_ayah_idx=seen_ayah_idx,
+        seen_seg_key=seen_seg_key,
+    )
+
     for group, segs in circle_word_segs:
-        for verse_num, _ in group.verses:
-            try:
-                verse_words = _fetch_verse_words(surah, verse_num)
-            except Exception:
-                continue
-            for start, end, ar_word in segs:
-                seg_key = (start, ar_word)
-                if seg_key in seen_seg_key:
-                    continue
-                en_word, idx = _word_to_translation(ar_word, verse_words)
-                if idx >= 0 and (verse_num, idx) not in seen_ayah_idx:
-                    seen_ayah_idx.add((verse_num, idx))
-                    seen_seg_key.add(seg_key)
-                    all_word_aligns.append({
-                        "start": start,
-                        "end": end,
-                        "ar": ar_word,
-                        "en": en_word,
-                        "idx": idx,
-                        "ayah": verse_num,
-                    })
-                # Store first successful English match per segment
-                if en_word and (start, end) not in segment_en_map:
-                    segment_en_map[(start, end)] = en_word
+        candidates_list = resolver.harvest(group, segs)
+        resolver.resolve(candidates_list)
 
     word_align_path.write_text(
         json.dumps(all_word_aligns, ensure_ascii=False), encoding="utf-8"

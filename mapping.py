@@ -38,6 +38,8 @@ from modules.whispertranscribe import (
     load_model,
     _extract_audio_chunk,
     AUDIO_SAMPLE_RATE,
+    USE_MODAL,
+    _get_modal_fn,
 )
 from modules.semanticmatch import (
     run_matching,
@@ -112,10 +114,7 @@ def _transcribe_segments(
 ) -> List[Tuple[float, float, str]]:
     """Separate Transkription nur für feine Segment-Grenzen.
 
-    Ruft faster-whisper direkt auf (nicht den WhisperX-Wrapper)
-    mit feinerer VAD-Schwelle und word_timestamps=True.
-    Kein Stille-Padding, keine Pausen-Kompression.
-    Die bestehende WhisperX-Pipeline (transcribe_chunks) bleibt unverändert.
+    Ruft faster-whisper auf (lokal oder über Modal) mit word_timestamps=True.
     """
     import tempfile
 
@@ -123,29 +122,54 @@ def _transcribe_segments(
         tmp_path = Path(tmp.name)
     try:
         _extract_audio_chunk(audio_path, window.start_sec, window.end_sec, tmp_path)
-        segs, _ = model.model.transcribe(
-            str(tmp_path),
-            language="ar",
-            beam_size=5,
-            word_timestamps=True,
-            vad_filter=True,
-            vad_parameters={"min_silence_duration_ms": 400},
-        )
+
+        if USE_MODAL:
+            import whisperx
+            audio = whisperx.load_audio(str(tmp_path))
+            modal_fn = _get_modal_fn()
+            result = modal_fn.remote(
+                audio.tobytes(),
+                language="ar",
+            )
+            segments_raw = result["segments"]
+        else:
+            segs, _ = model.model.transcribe(
+                str(tmp_path),
+                language="ar",
+                beam_size=5,
+                word_timestamps=True,
+                vad_filter=True,
+                vad_parameters={"min_silence_duration_ms": 400},
+            )
+            segments_raw = [
+                {
+                    "start": seg.start,
+                    "end": seg.end,
+                    "text": seg.text.strip(),
+                    "words": [
+                        {"word": w.word.strip(), "start": w.start, "end": w.end}
+                        for w in (seg.words or [])
+                    ],
+                }
+                for seg in segs
+            ]
     finally:
         tmp_path.unlink(missing_ok=True)
 
     offset = window.start_sec
     segments = []
-    for seg in segs:
-        if seg.words:
-            for word in seg.words:
-                start = word.start + offset
-                end = word.end + offset
-                segments.append((round(start, 3), round(end, 3), word.word.strip()))
+    for seg in segments_raw:
+        if seg.get("words"):
+            for w in seg["words"]:
+                if not w.get("word"):
+                    continue
+                start = w["start"] + offset
+                end = w["end"] + offset
+                segments.append((round(start, 3), round(end, 3), w["word"]))
         else:
-            start = seg.start + offset
-            end = seg.end + offset
-            segments.append((round(start, 3), round(end, 3), seg.text.strip()))
+            start = seg["start"] + offset
+            end = seg["end"] + offset
+            segments.append((round(start, 3), round(end, 3), seg["text"]))
     return segments
 
 
@@ -313,6 +337,7 @@ def run(
     # Build segment→English text map for segments output
     segment_en_map: Dict[Tuple[float, float], str] = {}
     seen_ayah_idx: set = set()
+    seen_seg_key: set = set()
 
     for group, segs in circle_word_segs:
         for verse_num, _ in group.verses:
@@ -321,9 +346,13 @@ def run(
             except Exception:
                 continue
             for start, end, ar_word in segs:
+                seg_key = (start, ar_word)
+                if seg_key in seen_seg_key:
+                    continue
                 en_word, idx = _word_to_translation(ar_word, verse_words)
                 if idx >= 0 and (verse_num, idx) not in seen_ayah_idx:
                     seen_ayah_idx.add((verse_num, idx))
+                    seen_seg_key.add(seg_key)
                     all_word_aligns.append({
                         "start": start,
                         "end": end,

@@ -445,12 +445,22 @@ def _transcribe_chunk_local(
     )
 
 
+_MODAL_FN = None
+
+def _get_modal_fn():
+    global _MODAL_FN
+    if _MODAL_FN is None:
+        from modal import Function
+        _MODAL_FN = Function.from_name("whispe_rayah-aligner", "transcribe_audio_chunk")
+    return _MODAL_FN
+
+
 def _transcribe_chunk_modal(
     video_path: Path,
     window: FrameWindow,
 ) -> ChunkTranscription:
     """Transkription mit Modal (VAD lokal, Whisper-Inferenz auf Modal-GPU)."""
-    from modules.whisper_modal import transcribe_audio_chunk
+    modal_fn = _get_modal_fn()
 
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
         tmp_path = Path(tmp.name)
@@ -474,7 +484,7 @@ def _transcribe_chunk_modal(
         f1 = int(vs["start"] * AUDIO_SAMPLE_RATE)
         f2 = int(vs["end"] * AUDIO_SAMPLE_RATE)
         seg_audio = audio[f1:f2]
-        result = transcribe_audio_chunk.remote(
+        result = modal_fn.remote(
             seg_audio.tobytes(),
             language=WHISPER_LANGUAGE,
         )
@@ -513,7 +523,9 @@ def transcribe_chunk(
     Transkribiert ein einzelnes videowindow-Häppchen.
 
     Wenn USE_MODAL=True wird die GPU-Inferenz auf Modal ausgelagert
-    (VAD bleibt lokal). Andernfalls wird das lokale whisperx-Modell verwendet.
+    (VAD bleibt lokal). Dafür muss vorher
+    `modal deploy modules/whisper_modal.py` ausgeführt worden sein.
+    Andernfalls wird das lokale whisperx-Modell verwendet.
 
     Parameters
     ----------

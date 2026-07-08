@@ -41,7 +41,7 @@ def main():
 @app.function(
     image=_image,
     gpu="A10G",
-    container_idle_timeout=300,
+    scaledown_window=300,
     timeout=600,
 )
 def transcribe_audio_chunk(

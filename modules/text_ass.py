@@ -254,7 +254,7 @@ def _progressive_word_lines(
         for li in range(len(wrapped_lines)):
             words_in_line = [w for w, l, v, p in word_entries if l == li]
             if words_in_line:
-                lines_text.append(" ".join(rf"{{\k2}}{w}" for w in words_in_line))
+                lines_text.append(" ".join(words_in_line))
         full_text = r"\N".join(lines_text)
         return [(full_text, entry_start, entry_end)]
 
@@ -301,32 +301,27 @@ def _progressive_word_lines(
             word_timings[i] = (cur_start, max(cur_end, cur_start + 0.001))
 
     result: List[Tuple[str, float, float]] = []
-    for i, (word, li, verse, pos) in enumerate(word_entries):
+    for i in range(num_words):
         cur_start, cur_end = word_timings[i]
         next_start = word_timings[i + 1][0] if i + 1 < num_words else entry_end
         line_end = next_start if next_start >= cur_start + 0.01 else cur_start + 0.01
 
-        word_dur_cs = max(1, int((cur_end - cur_start) * 100))
-
         lines_visible = []
         for li_w in range(len(wrapped_lines)):
-            words_in_this_line = [
-                (j, w)
-                for j, (w, l, v, p) in enumerate(word_entries[: i + 1])
-                if l == li_w
-            ]
-            if not words_in_this_line:
+            indices = [j for j, (w, l, v, p) in enumerate(word_entries) if l == li_w]
+            if not indices:
                 continue
             parts = []
-            for j, w in words_in_this_line:
-                if j < i:
-                    parts.append(w)
+            for j in indices:
+                w = word_entries[j][0]
+                if j == i:
+                    clean = re.sub(r"\{[^}]*\}", "", w)
+                    parts.append(rf"{{\c&H00A5FF&}}{clean}{{\c}}")
                 else:
-                    parts.append(rf"{{\K{word_dur_cs}}}{w}")
+                    parts.append(w)
             lines_visible.append(" ".join(parts))
 
         line_text = r"\N".join(lines_visible)
-        line_text = rf"{{\2c&H222222&}}" + line_text
         result.append((line_text, cur_start, line_end))
 
     if result:

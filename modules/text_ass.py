@@ -287,10 +287,16 @@ def _progressive_word_lines(
             word_timings[i + k] = (t_start, t_end)
         i = j
 
+    for i in range(1, num_words):
+        prev_start = word_timings[i - 1][0]
+        cur_start, cur_end = word_timings[i]
+        if cur_start < prev_start:
+            word_timings[i] = (prev_start, max(cur_end, prev_start))
+
     result: List[Tuple[str, float, float]] = []
     for i, (word, li, verse, pos) in enumerate(word_entries):
         cur_start, cur_end = word_timings[i]
-        line_end = word_timings[i + 1][0] if i + 1 < num_words else entry_end
+        line_end = max(word_timings[i + 1][0], cur_start) if i + 1 < num_words else max(entry_end, cur_start)
 
         word_dur_cs = max(1, int((cur_end - cur_start) * 100))
 
@@ -312,7 +318,7 @@ def _progressive_word_lines(
             lines_visible.append(" ".join(parts))
 
         line_text = r"\N".join(lines_visible)
-        line_text = rf"\2c&H222222&" + line_text
+        line_text = rf"{{\2c&H222222&}}" + line_text
         result.append((line_text, cur_start, line_end))
 
     return result

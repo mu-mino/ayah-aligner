@@ -301,11 +301,20 @@ def _progressive_word_lines(
             word_timings[i] = (cur_start, max(cur_end, cur_start + 0.001))
 
     # Shift all timestamps so the earliest word starts at entry_start
-    if word_timings and word_timings[0][0] < entry_start:
-        shift = entry_start - word_timings[0][0]
-        max_shift = max(0.0, entry_end - word_timings[-1][1])
-        shift = min(shift, max_shift)
-        word_timings = [(s + shift, e + shift) for s, e in word_timings]
+    if word_timings:
+        earliest = min(s for s, e in word_timings)
+        if earliest < entry_start:
+            shift = entry_start - earliest
+            word_timings = [(s + shift, e + shift) for s, e in word_timings]
+
+    # Clamp all timestamps within [entry_start, entry_end]
+    for i in range(num_words):
+        s, e = word_timings[i]
+        s = max(s, entry_start)
+        s = min(s, entry_end)
+        e = min(e, entry_end)
+        e = max(e, s + 0.001)
+        word_timings[i] = (s, e)
 
     result: List[Tuple[str, float, float]] = []
     for i in range(num_words):

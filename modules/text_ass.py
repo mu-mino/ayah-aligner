@@ -300,6 +300,13 @@ def _progressive_word_lines(
         if cur_start < prev_start:
             word_timings[i] = (cur_start, max(cur_end, cur_start + 0.001))
 
+    # Shift all timestamps so the earliest word starts at entry_start
+    if word_timings and word_timings[0][0] < entry_start:
+        shift = entry_start - word_timings[0][0]
+        max_shift = max(0.0, entry_end - word_timings[-1][1])
+        shift = min(shift, max_shift)
+        word_timings = [(s + shift, e + shift) for s, e in word_timings]
+
     result: List[Tuple[str, float, float]] = []
     for i in range(num_words):
         cur_start, cur_end = word_timings[i]
@@ -315,8 +322,12 @@ def _progressive_word_lines(
             for j in indices:
                 w = word_entries[j][0]
                 if j == i:
-                    clean = re.sub(r"\{[^}]*\}", "", w)
-                    parts.append(rf"{{\c&H00A5FF&}}{clean}{{\c}}")
+                    # Replace all color-setting tags with orange; preserve other format tags
+                    colored = re.sub(r'\\c&H[0-9A-Fa-f]+&?', r'\\c&H00A5FF&', w)
+                    if colored == w:
+                        parts.append(rf"{{\c&H00A5FF&}}{w}{{\c}}")
+                    else:
+                        parts.append(colored)
                 else:
                     parts.append(w)
             lines_visible.append(" ".join(parts))
@@ -585,7 +596,7 @@ def build_ass(
             font_size=font_size, video_width=width, video_height=height,
         )
         for line_text, w_start, w_end in word_lines:
-            line_tags = rf"\an5\pos({x},{y_adjusted})\bord1\blur0"
+            line_tags = rf"\an5\pos({x},{y_adjusted})\bord1\blur0\fad(20,20)"
             events.append(
                 f"Dialogue: 0,{sec_to_ass_time(w_start)},{sec_to_ass_time(w_end)},Overlay,,0,0,0,,{{{line_tags}}}{line_text}"
             )

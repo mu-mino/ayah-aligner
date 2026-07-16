@@ -321,11 +321,15 @@ def _progressive_word_lines(
         e = max(e, s + 0.001)
         word_timings[i] = (s, e)
 
+    window_size = 3
     result: List[Tuple[str, float, float]] = []
     for i in range(num_words):
         cur_start, cur_end = word_timings[i]
         next_start = word_timings[i + 1][0] if i + 1 < num_words else entry_end
         line_end = next_start if next_start >= cur_start + 0.01 else cur_start + 0.01
+
+        win_start = max(0, i - window_size)
+        win_end = min(num_words - 1, i + window_size)
 
         lines_visible = []
         for li_w in range(len(wrapped_lines)):
@@ -334,18 +338,19 @@ def _progressive_word_lines(
                 continue
             parts = []
             for j in indices:
+                if j < win_start or j > win_end:
+                    continue
                 w = word_entries[j][0]
-                if j == i:
-                    # Replace all color-setting tags with orange; preserve other format tags
-                    colored = re.sub(r'\\c&H[0-9A-Fa-f]+&?', r'\\c&H00A5FF&', w)
-                    if colored == w:
-                        parts.append(rf"{{\c&H00A5FF&}}{w}{{\c}}")
-                    else:
-                        parts.append(colored)
+                colored = re.sub(r'\\c&H[0-9A-Fa-f]+&?', r'\\c&H00A5FF&', w)
+                if colored == w:
+                    parts.append(rf"{{\c&H00A5FF&}}{w}{{\c}}")
                 else:
-                    parts.append(w)
-            lines_visible.append(" ".join(parts))
+                    parts.append(colored)
+            if parts:
+                lines_visible.append(" ".join(parts))
 
+        if not lines_visible:
+            lines_visible.append(word_entries[i][0])
         line_text = r"\N".join(lines_visible)
         result.append((line_text, cur_start, line_end))
 

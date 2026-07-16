@@ -38,8 +38,6 @@ from modules.whispertranscribe import (
     load_model,
     _extract_audio_chunk,
     AUDIO_SAMPLE_RATE,
-    USE_MODAL,
-    _get_modal_fn,
 )
 from modules.semanticmatch import (
     run_matching,
@@ -48,6 +46,7 @@ from modules.semanticmatch import (
     extract_verse_number,
     _fetch_verse_words,
     _word_to_translation,
+    _word_to_translation_from,
 )
 
 BASE_DIR = Path(__file__).parent
@@ -107,9 +106,6 @@ class WindowGroup:
 # ---------------------------------------------------------------------------
 
 
-_TRANSCRIBE_PADDING: float = 3.0  # Sekunden vor window.start_sec für Audio-Kontext
-
-
 def _transcribe_segments(
     audio_path: Path,
     window: FrameWindow,
@@ -117,67 +113,40 @@ def _transcribe_segments(
 ) -> List[Tuple[float, float, str]]:
     """Separate Transkription nur für feine Segment-Grenzen.
 
-    Ruft faster-whisper auf (lokal oder über Modal) mit word_timestamps=True.
-    Extrahiert _TRANSCRIBE_PADDING Sekunden vor window.start_sec, damit
-    Rezitation die kurz vor dem Fenster beginnt (z.B. Verse 8 am Fensterrand)
-    nicht abgeschnitten wird.
+    Ruft faster-whisper direkt auf (nicht den WhisperX-Wrapper)
+    mit feinerer VAD-Schwelle und word_timestamps=True.
+    Kein Stille-Padding, keine Pausen-Kompression.
+    Die bestehende WhisperX-Pipeline (transcribe_chunks) bleibt unverändert.
     """
     import tempfile
-
-    pad_start = max(0.0, window.start_sec - _TRANSCRIBE_PADDING)
 
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
         tmp_path = Path(tmp.name)
     try:
-        _extract_audio_chunk(audio_path, pad_start, window.end_sec, tmp_path)
-
-        if USE_MODAL:
-            import whisperx
-            audio = whisperx.load_audio(str(tmp_path))
-            modal_fn = _get_modal_fn()
-            result = modal_fn.remote(
-                audio.tobytes(),
-                language="ar",
-            )
-            segments_raw = result["segments"]
-        else:
-            segs, _ = model.model.transcribe(
-                str(tmp_path),
-                language="ar",
-                beam_size=5,
-                word_timestamps=True,
-                vad_filter=True,
-                vad_parameters={"min_silence_duration_ms": 400},
-            )
-            segments_raw = [
-                {
-                    "start": seg.start,
-                    "end": seg.end,
-                    "text": seg.text.strip(),
-                    "words": [
-                        {"word": w.word.strip(), "start": w.start, "end": w.end}
-                        for w in (seg.words or [])
-                    ],
-                }
-                for seg in segs
-            ]
+        _extract_audio_chunk(audio_path, window.start_sec, window.end_sec, tmp_path)
+        segs, _ = model.model.transcribe(
+            str(tmp_path),
+            language="ar",
+            beam_size=5,
+            word_timestamps=True,
+            vad_filter=True,
+            vad_parameters={"min_silence_duration_ms": 400},
+        )
     finally:
         tmp_path.unlink(missing_ok=True)
 
-    offset = pad_start
+    offset = window.start_sec
     segments = []
-    for seg in segments_raw:
-        if seg.get("words"):
-            for w in seg["words"]:
-                if not w.get("word"):
-                    continue
-                start = w["start"] + offset
-                end = w["end"] + offset
-                segments.append((round(start, 3), round(end, 3), w["word"]))
+    for seg in segs:
+        if seg.words:
+            for word in seg.words:
+                start = word.start + offset
+                end = word.end + offset
+                segments.append((round(start, 3), round(end, 3), word.word.strip()))
         else:
-            start = seg["start"] + offset
-            end = seg["end"] + offset
-            segments.append((round(start, 3), round(end, 3), seg["text"]))
+            start = seg.start + offset
+            end = seg.end + offset
+            segments.append((round(start, 3), round(end, 3), seg.text.strip()))
     return segments
 
 
@@ -193,181 +162,6 @@ def _load_gray(video_path: Path, window: FrameWindow):
     if not ok:
         return None
     return cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-
-
-# ---------------------------------------------------------------------------
-# Word Alignment Resolver (Two-Phase: Harvest → Lookahead-Disambiguierung)
-# ---------------------------------------------------------------------------
-
-
-class WordAlignmentResolver:
-    """Sammelt alle validen Kandidaten pro Segment und wählt per Lookahead."""
-
-    LOOKAHEAD_WINDOW = 8
-
-    def __init__(
-        self,
-        surah: int,
-        all_word_aligns: list,
-        segment_en_map: dict,
-        seen_ayah_idx: set,
-        seen_seg_key: set,
-    ):
-        self.surah = surah
-        self.all_word_aligns = all_word_aligns
-        self.segment_en_map = segment_en_map
-        self.seen_ayah_idx = seen_ayah_idx
-        self.seen_seg_key = seen_seg_key
-
-    # ------------------------------------------------------------------
-    # Phase 1 — alle Kandidaten sammeln
-    # ------------------------------------------------------------------
-
-    def harvest(
-        self, group: "WindowGroup", segs: list
-    ) -> list:
-        """Gibt pro Segment eine Liste valider (verse, idx, en, start, end, ar)."""
-        candidates_list: list = []
-        for start, end, ar_word in segs:
-            seg_key = (start, ar_word)
-            if seg_key in self.seen_seg_key:
-                candidates_list.append([])
-                continue
-            segment_candidates: list = []
-            for verse_num, _ in group.verses:
-                try:
-                    verse_words = _fetch_verse_words(self.surah, verse_num)
-                except Exception:
-                    continue
-                en_word, idx = _word_to_translation(ar_word, verse_words)
-                if idx >= 0 and (verse_num, idx) not in self.seen_ayah_idx:
-                    segment_candidates.append(
-                        {
-                            "verse": verse_num,
-                            "idx": idx,
-                            "en": en_word,
-                            "start": start,
-                            "end": end,
-                            "ar": ar_word,
-                            "seg_key": seg_key,
-                        }
-                    )
-            candidates_list.append(segment_candidates)
-        return candidates_list
-
-    # ------------------------------------------------------------------
-    # Phase 2 — Lookahead-Disambiguierung + Commit
-    # ------------------------------------------------------------------
-
-    def resolve(self, candidates_list: list) -> None:
-        """Löst Ambiguitäten iterativ auf und committed alle Kandidaten."""
-        committed: dict = {}
-        changed = True
-        while changed:
-            changed = False
-            for i, seg_candidates in enumerate(candidates_list):
-                if i in committed:
-                    continue
-
-                valid = [
-                    c
-                    for c in seg_candidates
-                    if (c["verse"], c["idx"]) not in self.seen_ayah_idx
-                ]
-                if not valid:
-                    committed[i] = None
-                    changed = True
-                    continue
-
-                if len(valid) == 1:
-                    self._commit(valid[0])
-                    committed[i] = valid[0]
-                    changed = True
-                    continue
-
-                best = max(
-                    valid,
-                    key=lambda c: self._backward_fit(c)
-                    + self._lookahead_chain(
-                        c, candidates_list, i + 1, committed
-                    ),
-                )
-                self._commit(best)
-                committed[i] = best
-                changed = True
-
-    # ------------------------------------------------------------------
-    # Backward-Fit — passt der Kandidat in die bereits kommittierte Sequenz?
-    # ------------------------------------------------------------------
-
-    def _backward_fit(self, candidate: dict) -> float:
-        """2.0 wenn der direkte Vorgänger (same verse, idx-1) schon committed ist."""
-        cv, ci = candidate["verse"], candidate["idx"]
-        if (cv, ci - 1) in self.seen_ayah_idx:
-            return 2.0
-        return 0.0
-
-    # ------------------------------------------------------------------
-    # Lookahead — längste inkrementelle Kette ab einem Kandidaten
-    # ------------------------------------------------------------------
-
-    def _lookahead_chain(
-        self,
-        candidate: dict,
-        candidates_list: list,
-        start_idx: int,
-        committed: dict,
-    ) -> float:
-        c_v, c_i = candidate["verse"], candidate["idx"]
-        chain = 0.0
-        window = candidates_list[start_idx : start_idx + self.LOOKAHEAD_WINDOW]
-
-        for cis in window:
-            expected = [(c_v, c_i + 1), (c_v + 1, 0)]
-            found = None
-            for c in cis:
-                if (c["verse"], c["idx"]) not in self.seen_ayah_idx:
-                    if (c["verse"], c["idx"]) in expected:
-                        found = c
-                        break
-            if found is None:
-                expected_gap = [(c_v, c_i + 2), (c_v + 1, 1)]
-                for c in cis:
-                    if (c["verse"], c["idx"]) not in self.seen_ayah_idx:
-                        if (c["verse"], c["idx"]) in expected_gap:
-                            found = c
-                            chain += 0.5
-                            break
-            if found:
-                chain += 1.0
-                c_v, c_i = found["verse"], found["idx"]
-            else:
-                break
-        return chain
-
-    # ------------------------------------------------------------------
-    # Commit — übernimmt einen Kandidaten in die globalen Strukturen
-    # ------------------------------------------------------------------
-
-    def _commit(self, candidate: dict) -> None:
-        seg_key = candidate["seg_key"]
-        self.seen_seg_key.add(seg_key)
-        self.seen_ayah_idx.add((candidate["verse"], candidate["idx"]))
-
-        self.all_word_aligns.append(
-            {
-                "start": candidate["start"],
-                "end": candidate["end"],
-                "ar": candidate["ar"],
-                "en": candidate["en"],
-                "idx": candidate["idx"],
-                "ayah": candidate["verse"],
-            }
-        )
-
-        key = (candidate["start"], candidate["end"])
-        if candidate["en"] and key not in self.segment_en_map:
-            self.segment_en_map[key] = candidate["en"]
 
 
 # ---------------------------------------------------------------------------
@@ -519,20 +313,76 @@ def run(
     # 4b. Word-level alignment für ALLE groups (circle windows)
     # Build segment→English text map for segments output
     segment_en_map: Dict[Tuple[float, float], str] = {}
-    seen_ayah_idx: set = set()
-    seen_seg_key: set = set()
-
-    resolver = WordAlignmentResolver(
-        surah=surah,
-        all_word_aligns=all_word_aligns,
-        segment_en_map=segment_en_map,
-        seen_ayah_idx=seen_ayah_idx,
-        seen_seg_key=seen_seg_key,
-    )
 
     for group, segs in circle_word_segs:
-        candidates_list = resolver.harvest(group, segs)
-        resolver.resolve(candidates_list)
+        for verse_num, _ in group.verses:
+            try:
+                verse_words = _fetch_verse_words(surah, verse_num)
+            except Exception:
+                continue
+
+            window_aligns: List[dict] = []
+            cursor = 0
+
+            for start, end, ar_word in segs:
+                en_word, idx = _word_to_translation_from(ar_word, verse_words, cursor)
+                if idx >= 0:
+                    window_aligns.append({
+                        "start": start,
+                        "end": end,
+                        "ar": ar_word,
+                        "en": en_word,
+                        "idx": idx,
+                        "ayah": verse_num,
+                    })
+                    cursor = idx + 1
+                if en_word and (start, end) not in segment_en_map:
+                    segment_en_map[(start, end)] = en_word
+
+            # Guard: prüfe ob Alignment valide ist
+            def _guard_ok(aligns: List[dict], verse_words: list) -> bool:
+                if not aligns:
+                    return False
+                n_verse = len(verse_words)
+                idxs = [a["idx"] for a in aligns]
+                # Kriterium 2: Duplikate
+                if len(idxs) != len(set(idxs)):
+                    return False
+                # Kriterium 3: extreme Dauer (>4s pro Wort)
+                if any(a["end"] - a["start"] > 4.0 for a in aligns):
+                    return False
+                # Kriterium 4: Idx-Lücken > 10 aufeinanderfolgende fehlende Wörter
+                sorted_idxs = sorted(idxs)
+                for i in range(1, len(sorted_idxs)):
+                    if sorted_idxs[i] - sorted_idxs[i - 1] > 10:
+                        return False
+                # Kriterium 5: Coverage < 30%
+                if len(aligns) / max(n_verse, 1) < 0.30:
+                    return False
+                return True
+
+            if _guard_ok(window_aligns, verse_words):
+                all_word_aligns.extend(window_aligns)
+            else:
+                # Fallback C: lineare Verteilung der Whisper-Timestamps auf Vers-Wörter
+                if segs:
+                    win_start = segs[0][0]
+                    win_end = segs[-1][1]
+                    n = len(verse_words)
+                    dur = win_end - win_start
+                    for vi, vw in enumerate(verse_words):
+                        t = win_start + (vi / n) * dur
+                        t_end = win_start + ((vi + 1) / n) * dur
+                        tr = vw.get("translation", {})
+                        en = tr.get("text", "").strip() if isinstance(tr, dict) else ""
+                        all_word_aligns.append({
+                            "start": round(t, 4),
+                            "end": round(t_end, 4),
+                            "ar": vw["text_uthmani"],
+                            "en": en,
+                            "idx": vi,
+                            "ayah": verse_num,
+                        })
 
     word_align_path.write_text(
         json.dumps(all_word_aligns, ensure_ascii=False), encoding="utf-8"
@@ -659,15 +509,10 @@ def run(
                 cleaned.append(file_line)
             mapping_path.write_text("\n".join(cleaned) + "\n", encoding="utf-8")
 
-    # Sub-window alignments an word_align.json appenden (dedupliziert nach ayah,idx)
+    # Sub-window alignments an word_align.json appenden
     if sub_word_aligns:
         existing = json.loads(word_align_path.read_text(encoding="utf-8"))
-        existing_pairs = {(d["ayah"], d["idx"]) for d in existing if d.get("idx", -1) >= 0}
-        for wa in sub_word_aligns:
-            key = (wa["ayah"], wa["idx"])
-            if key not in existing_pairs:
-                existing_pairs.add(key)
-                existing.append(wa)
+        existing.extend(sub_word_aligns)
         word_align_path.write_text(
             json.dumps(existing, ensure_ascii=False), encoding="utf-8"
         )

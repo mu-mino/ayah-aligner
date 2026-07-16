@@ -265,6 +265,43 @@ def _get_stems(word: str) -> set:
     return stems
 
 
+def _word_to_translation_from(arabic_word: str, verse_words: list, min_idx: int = 0) -> Tuple[str, int]:
+    chunk_stems = _get_stems(arabic_word)
+
+    for idx in range(min_idx, len(verse_words)):
+        w = verse_words[idx]
+        verse_stems = _get_stems(w["text_uthmani"])
+        if chunk_stems & verse_stems:
+            t = w.get("translation", {})
+            text = t.get("text", "") if isinstance(t, dict) else ""
+            if re.match(r"^\(\d+\)$", text.strip()):
+                return ("", -1)
+            return (text.strip(), idx)
+
+    norm_word = _normalize_arabic(arabic_word)
+    best_score = 0.0
+    best_idx = -1
+    best_match = None
+
+    for idx in range(min_idx, len(verse_words)):
+        w = verse_words[idx]
+        norm_verse = _normalize_arabic(w["text_uthmani"])
+        score = SequenceMatcher(None, norm_word, norm_verse).ratio()
+        if score > best_score:
+            best_score = score
+            best_idx = idx
+            best_match = w
+
+    if best_score < WORD_MATCH_TOLERANCE or best_match is None:
+        return ("", -1)
+
+    t = best_match.get("translation", {})
+    text = t.get("text", "") if isinstance(t, dict) else ""
+    if re.match(r"^\(\d+\)$", text.strip()):
+        return ("", -1)
+    return (text.strip(), best_idx)
+
+
 def _word_to_translation(arabic_word: str, verse_words: list) -> Tuple[str, int]:
     chunk_stems = _get_stems(arabic_word)
 

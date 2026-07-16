@@ -341,11 +341,14 @@ def _progressive_word_lines(
                 if j < win_start or j > win_end:
                     continue
                 w = word_entries[j][0]
-                colored = re.sub(r'\\c&H[0-9A-Fa-f]+&?', r'\\c&H00A5FF&', w)
-                if colored == w:
-                    parts.append(rf"{{\c&H00A5FF&}}{w}{{\c}}")
+                if i <= j <= i + 3:
+                    colored = re.sub(r'\\c&H[0-9A-Fa-f]+&?', r'\\c&H00A5FF&', w)
+                    if colored == w:
+                        parts.append(rf"{{\c&H00A5FF&}}{w}{{\c}}")
+                    else:
+                        parts.append(colored)
                 else:
-                    parts.append(colored)
+                    parts.append(w)
             if parts:
                 lines_visible.append(" ".join(parts))
 

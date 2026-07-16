@@ -77,7 +77,7 @@ def _rouge_l(reference: str, candidate: str) -> float:
 # Arabische Normalisierung
 # ---------------------------------------------------------------------------
 
-_AR_DIACRITICS = regex.compile(r"[\p{M}\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED]+")
+_AR_DIACRITICS = regex.compile(r"[\p{M}\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED\u06DF-\u06E8\u06EA-\u06FF]+")
 _AR_TATWEEL = "\u0640"
 _AR_NON_ARABIC = regex.compile(r"[^\p{Arabic} ]+")
 _AR_MULTI_SPACE = regex.compile(r"\s+")
@@ -86,6 +86,8 @@ _AR_CHAR_MAP = str.maketrans(
     {
         "آ": "ا",
         "ٱ": "ا",
+        "أ": "ا",
+        "إ": "ا",
         "ى": "ي",
         "ئ": "ي",
         "ؤ": "و",
@@ -95,6 +97,10 @@ _AR_CHAR_MAP = str.maketrans(
         "ڤ": "ف",
         "پ": "ب",
         "چ": "ج",
+        "ٓ": "",  # Hamza-oben (Madda-Zeichen)
+        "ۭ": "",  # Small High Sign
+        "ۙ": "",  # Pause-Zeichen
+        "ـ": "",  # Tatweel (falls nicht via separate Zeile entfernt)
     }
 )
 
@@ -272,8 +278,8 @@ def _word_to_translation_from(arabic_word: str, verse_words: list, min_idx: int 
         w = verse_words[idx]
         verse_stems = _get_stems(w["text_uthmani"])
         if chunk_stems & verse_stems:
-            t = w.get("translation", {})
-            text = t.get("text", "") if isinstance(t, dict) else ""
+            t = w.get("translation", "")
+            text = t if isinstance(t, str) else ""
             if re.match(r"^\(\d+\)$", text.strip()):
                 return ("", -1)
             return (text.strip(), idx)
@@ -295,8 +301,8 @@ def _word_to_translation_from(arabic_word: str, verse_words: list, min_idx: int 
     if best_score < WORD_MATCH_TOLERANCE or best_match is None:
         return ("", -1)
 
-    t = best_match.get("translation", {})
-    text = t.get("text", "") if isinstance(t, dict) else ""
+    t = best_match.get("translation", "")
+    text = t if isinstance(t, str) else ""
     if re.match(r"^\(\d+\)$", text.strip()):
         return ("", -1)
     return (text.strip(), best_idx)
@@ -308,8 +314,8 @@ def _word_to_translation(arabic_word: str, verse_words: list) -> Tuple[str, int]
     for idx, w in enumerate(verse_words):
         verse_stems = _get_stems(w["text_uthmani"])
         if chunk_stems & verse_stems:
-            t = w.get("translation", {})
-            text = t.get("text", "") if isinstance(t, dict) else ""
+            t = w.get("translation", "")
+            text = t if isinstance(t, str) else ""
             if re.match(r"^\(\d+\)$", text.strip()):
                 return ("", -1)
             return (text.strip(), idx)
@@ -330,8 +336,8 @@ def _word_to_translation(arabic_word: str, verse_words: list) -> Tuple[str, int]
     if best_score < WORD_MATCH_TOLERANCE or best_match is None:
         return ("", -1)
 
-    t = best_match.get("translation", {})
-    text = t.get("text", "") if isinstance(t, dict) else ""
+    t = best_match.get("translation", "")
+    text = t if isinstance(t, str) else ""
     if re.match(r"^\(\d+\)$", text.strip()):
         return ("", -1)
     return (text.strip(), best_idx)

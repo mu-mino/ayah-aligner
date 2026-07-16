@@ -242,9 +242,12 @@ def _progressive_word_lines(
                 pos_in_verse = 0
             else:
                 clean = re.sub(r'\{[^}]*\}', '', t)
-                if clean:
-                    word_entries.append((clean, li, current_verse, pos_in_verse))
-                    pos_in_verse += 1
+                if not clean:
+                    continue
+                if re.search(r'[\(\)\[\]]', clean):
+                    continue
+                word_entries.append((clean, li, current_verse, pos_in_verse))
+                pos_in_verse += 1
 
     if not word_entries:
         return []

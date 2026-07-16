@@ -113,10 +113,11 @@ def spread_same_timestamps(entries: List[Entry], step: float = 0.18) -> List[Ent
 
 
 def sec_to_ass_time(t: float) -> str:
-    h, rem = divmod(t, 3600)
-    m, s = divmod(rem, 60)
-    cs = int(round((s - int(s)) * 100))
-    return f"{int(h)}:{int(m):02d}:{int(s):02d}.{cs:02d}"
+    cs_total = int(round(t * 100))
+    h, rem = divmod(cs_total, 360000)
+    m, rem = divmod(rem, 6000)
+    s, cs = divmod(rem, 100)
+    return f"{h}:{m:02d}:{s:02d}.{cs:02d}"
 
 
 def _ts2sec(t: str) -> float:
@@ -223,7 +224,7 @@ def _progressive_word_lines(
     video_height: int = 638,
 ) -> List[Tuple[str, float, float]]:
     aligns_sorted = sorted(
-        [wa for wa in word_aligns if wa.get("en")],
+        [wa for wa in word_aligns if wa.get("start") is not None and wa.get("end") is not None],
         key=lambda x: (x.get("ayah", 0), x.get("idx", 0)),
     )
 

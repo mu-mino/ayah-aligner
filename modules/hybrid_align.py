@@ -23,7 +23,10 @@ def merge_alignments(
 
     for k in all_keys:
         if k in whisper_idx:
-            merged.append(whisper_idx[k])
+            entry = dict(whisper_idx[k])
+            if not entry.get("en") and k in timething_idx:
+                entry["en"] = timething_idx[k].get("en", "")
+            merged.append(entry)
             whisper_used += 1
         else:
             merged.append(timething_idx[k])
@@ -44,7 +47,7 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--whisper", type=Path, default=BASE_DIR / "output" / "word_align.json")
+    parser.add_argument("--whisper", type=Path, default=BASE_DIR / "output" / "word_align_whisper.json")
     parser.add_argument("--timething", type=Path, default=BASE_DIR / "output" / "word_align_timething.json")
     parser.add_argument("--output", type=Path, default=BASE_DIR / "output" / "word_align.json")
     args = parser.parse_args()

@@ -86,13 +86,11 @@ class ChunkTranscription:
     window      : das zugehörige FrameWindow [start_sec, end_sec]
     segments    : von WhisperX erkannte Satz-/Wort-Segmente
     raw_text    : vollständiger Transkripttext des Fensters
-    word_timings: [(wort, start, end), …] von Whisper erkannte Wort-Zeitstempel
     """
 
     window: FrameWindow
     segments: List[TranscriptSegment] = field(default_factory=list)
     raw_text: str = ""
-    word_timings: List[Tuple[str, float, float]] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -260,14 +258,10 @@ def _load_whisper_cache(
                 stamp=s.get("stamp", _format_segment_stamp(start, end)),
             )
         )
-    word_timings = [
-        (w["word"], w["start"], w["end"]) for w in data.get("word_timings", [])
-    ]
     return ChunkTranscription(
         window=window,
         segments=segments,
         raw_text=data["raw_text"],
-        word_timings=word_timings,
     )
 
 
@@ -280,9 +274,6 @@ def _save_whisper_cache(video_path: Path, result: ChunkTranscription) -> None:
             for s in result.segments
         ],
         "raw_text": result.raw_text,
-        "word_timings": [
-            {"word": w, "start": s, "end": e} for w, s, e in result.word_timings
-        ],
     }
     cache_file.write_text(
         json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -401,7 +392,6 @@ def _transcribe_chunk_local(
 
     offset = window.start_sec
     segments: List[TranscriptSegment] = []
-    word_timings: List[Tuple[str, float, float]] = []
     for vs in merged:
         f1 = int(vs["start"] * AUDIO_SAMPLE_RATE)
         f2 = int(vs["end"] * AUDIO_SAMPLE_RATE)
@@ -428,20 +418,12 @@ def _transcribe_chunk_local(
                     stamp=_format_segment_stamp(start, end),
                 )
             )
-            if seg.words:
-                for w in seg.words:
-                    wtxt = w.word.strip()
-                    wstart = w.start + vs["start"] + offset
-                    wend = w.end + vs["start"] + offset
-                    if wtxt:
-                        word_timings.append((wtxt, round(wstart, 3), round(wend, 3)))
 
     raw_text = " ".join(s.text for s in segments)
     return ChunkTranscription(
         window=window,
         segments=segments,
         raw_text=raw_text,
-        word_timings=word_timings,
     )
 
 
@@ -479,7 +461,6 @@ def _transcribe_chunk_modal(
 
     offset = window.start_sec
     segments: List[TranscriptSegment] = []
-    word_timings: List[Tuple[str, float, float]] = []
     for vs in merged:
         f1 = int(vs["start"] * AUDIO_SAMPLE_RATE)
         f2 = int(vs["end"] * AUDIO_SAMPLE_RATE)
@@ -499,18 +480,12 @@ def _transcribe_chunk_modal(
                     stamp=_format_segment_stamp(start, end),
                 )
             )
-            for w in seg["words"]:
-                wstart = w["start"] + vs["start"] + offset
-                wend = w["end"] + vs["start"] + offset
-                if w["word"]:
-                    word_timings.append((w["word"], round(wstart, 3), round(wend, 3)))
 
     raw_text = " ".join(s.text for s in segments)
     return ChunkTranscription(
         window=window,
         segments=segments,
         raw_text=raw_text,
-        word_timings=word_timings,
     )
 
 

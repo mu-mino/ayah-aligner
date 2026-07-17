@@ -36,8 +36,6 @@ from modules.circlelog import (
 from modules.whispertranscribe import (
     transcribe_chunks,
     load_model,
-    _extract_audio_chunk,
-    AUDIO_SAMPLE_RATE,
     USE_MODAL,
 )
 from modules.semanticmatch import (
@@ -46,12 +44,12 @@ from modules.semanticmatch import (
     extract_verse_text,
     extract_verse_number,
     _fetch_verse_words,
-    _word_to_translation,
-    _word_to_translation_from,
 )
-from modules.forced_align import ForcedAligner
+from modules.quran_align import get_alignments_for_verses, pick_closest_reciter, get_available_reciters
 
 BASE_DIR = Path(__file__).parent
+
+reciter_name: Optional[str] = None
 
 # ---------------------------------------------------------------------------
 # Interne Datenstruktur
@@ -108,107 +106,7 @@ class WindowGroup:
 # ---------------------------------------------------------------------------
 
 
-def _transcribe_segments(
-    audio_path: Path,
-    window: FrameWindow,
-    model=None,
-) -> List[Tuple[float, float, str]]:
-    """Separate Transkription nur für feine Segment-Grenzen.
 
-    Ruft faster-whisper direkt auf (nicht den WhisperX-Wrapper)
-    mit feinerer VAD-Schwelle und word_timestamps=True.
-    Kein Stille-Padding, keine Pausen-Kompression.
-
-    Wenn USE_MODAL=True, wird die GPU-Inferenz auf Modal ausgelagert.
-    """
-    if USE_MODAL:
-        return _transcribe_segments_modal(audio_path, window)
-    return _transcribe_segments_local(audio_path, window, model)
-
-
-def _transcribe_segments_local(
-    audio_path: Path,
-    window: FrameWindow,
-    model,
-) -> List[Tuple[float, float, str]]:
-    import tempfile
-
-    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-        tmp_path = Path(tmp.name)
-    try:
-        _extract_audio_chunk(audio_path, window.start_sec, window.end_sec, tmp_path)
-        segs, _ = model.model.transcribe(
-            str(tmp_path),
-            language="ar",
-            beam_size=5,
-            word_timestamps=True,
-            vad_filter=True,
-            vad_parameters={"min_silence_duration_ms": 400},
-        )
-    finally:
-        tmp_path.unlink(missing_ok=True)
-
-    offset = window.start_sec
-    segments = []
-    for seg in segs:
-        if seg.words:
-            for word in seg.words:
-                start = word.start + offset
-                end = word.end + offset
-                segments.append((round(start, 3), round(end, 3), word.word.strip()))
-        else:
-            start = seg.start + offset
-            end = seg.end + offset
-            segments.append((round(start, 3), round(end, 3), seg.text.strip()))
-    return segments
-
-
-_MODAL_TRANSCRIBE_FN = None
-
-def _get_modal_transcribe_fn():
-    global _MODAL_TRANSCRIBE_FN
-    if _MODAL_TRANSCRIBE_FN is None:
-        from modal import Function
-        _MODAL_TRANSCRIBE_FN = Function.from_name("whispe-ayah-aligner", "transcribe_audio_chunk")
-    return _MODAL_TRANSCRIBE_FN
-
-
-def _transcribe_segments_modal(
-    audio_path: Path,
-    window: FrameWindow,
-) -> List[Tuple[float, float, str]]:
-    """Transkribiert ein Audio-Fenster via Modal (GPU serverless)."""
-    import tempfile
-    import numpy as np
-
-    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-        tmp_path = Path(tmp.name)
-    try:
-        _extract_audio_chunk(audio_path, window.start_sec, window.end_sec, tmp_path)
-        import soundfile as sf
-        audio, sr = sf.read(tmp_path)
-        if len(audio.shape) > 1:
-            audio = audio.mean(axis=1)
-        if sr != AUDIO_SAMPLE_RATE:
-            import scipy.signal
-            audio = scipy.signal.resample(
-                audio, int(len(audio) * AUDIO_SAMPLE_RATE / sr)
-            )
-        audio_bytes = audio.astype(np.float32).tobytes()
-    finally:
-        tmp_path.unlink(missing_ok=True)
-
-    modal_fn = _get_modal_transcribe_fn()
-    result = modal_fn.remote(audio_bytes)
-
-    offset = window.start_sec
-    segments = []
-    for seg in result["segments"]:
-        for w in seg.get("words", []):
-            start = w["start"] + offset
-            end = w["end"] + offset
-            segments.append((round(start, 3), round(end, 3), w["word"]))
-    return segments
 
 
 def _load_gray(video_path: Path, window: FrameWindow):
@@ -230,76 +128,6 @@ def _load_gray(video_path: Path, window: FrameWindow):
 # ---------------------------------------------------------------------------
 
 
-def _guard_ok(aligns: List[dict], verse_words: list) -> bool:
-    if not aligns: return False
-    n_verse = len(verse_words)
-    if n_verse == 0: return False
-    
-    if any(a["end"] - a["start"] > 4.0 for a in aligns): return False  # Duration
-    if any("score" in a and a["score"] > 0.0 for a in aligns):
-        avg_score = sum(a["score"] for a in aligns) / len(aligns)
-        if avg_score < 0.5:
-            return False
-    
-    return True
-
-
-def _interpolate_verse(
-    aligns: List[dict],
-    verse_words: list,
-    window_start: float,
-    window_end: float,
-    verse_num: int,
-) -> List[dict]:
-    """Interpoliert zwischen Anchor-Wörtern, deckt alle Vers-Wörter ab."""
-    sorted_a = sorted(aligns, key=lambda a: a["idx"])
-    n = len(verse_words)
-    result = []
-
-    def _make(vw, idx, start, end):
-        return {
-            "start": round(start, 4), "end": round(end, 4),
-            "ar": vw["text_uthmani"], "en": vw.get("translation", ""),
-            "idx": idx, "ayah": verse_num, "score": 0.0,
-        }
-
-    # Words before first anchor
-    first = sorted_a[0]
-    if first["idx"] > 0:
-        seg_len = first["start"] - window_start
-        for i in range(first["idx"]):
-            t = window_start + (i / first["idx"]) * seg_len
-            t_e = window_start + ((i + 1) / first["idx"]) * seg_len
-            result.append(_make(verse_words[i], i, t, t_e))
-
-    # Anchors + gaps between
-    for i, a in enumerate(sorted_a):
-        result.append(a)
-        if i + 1 < len(sorted_a):
-            nxt = sorted_a[i + 1]
-            gap = nxt["idx"] - a["idx"] - 1
-            if gap > 0:
-                seg_len = nxt["start"] - a["end"]
-                for j in range(gap):
-                    vi = a["idx"] + 1 + j
-                    t = a["end"] + (j / gap) * seg_len
-                    t_e = a["end"] + ((j + 1) / gap) * seg_len
-                    result.append(_make(verse_words[vi], vi, t, t_e))
-
-    # Words after last anchor
-    last = sorted_a[-1]
-    remaining = n - last["idx"] - 1
-    if remaining > 0:
-        seg_len = window_end - last["end"]
-        for j in range(remaining):
-            vi = last["idx"] + 1 + j
-            t = last["end"] + (j / remaining) * seg_len
-            t_e = last["end"] + ((j + 1) / remaining) * seg_len
-            result.append(_make(verse_words[vi], vi, t, t_e))
-
-    return result
-
-
 def run(
     video_path: Path,
     audio_path: Path,
@@ -307,7 +135,10 @@ def run(
     mapping_path: Path,
     surah: int,
     whisper_device: Optional[str] = None,
+    reciter: Optional[str] = None,
 ) -> None:
+    global reciter_name
+    reciter_name = reciter
     """
     Führt die vollständige Pipeline aus.
 
@@ -426,123 +257,51 @@ def run(
             mapping_lines.append(line)
     write_mapping(mapping_lines, mapping_path)
 
-    # 4. Multi-Stage Word Alignment
+    # 4. Word Alignment via Quran-Align pre-computed data
     # ------------------------------------------------------------------
     word_align_path = BASE_DIR / "output" / "word_align.json"
+    word_align_path.parent.mkdir(parents=True, exist_ok=True)
     all_word_aligns: List[dict] = []
-    
-    # Initialize Aligners
-    forced_aligner = ForcedAligner(device=whisper_device, use_modal=USE_MODAL)
-    forced_aligner.global_prompt = " ".join(
-        vw["text_uthmani"]
-        for group in groups
-        for verse_num, _ in group.verses
-        for vw in _fetch_verse_words(surah, verse_num)
-    )
-    if USE_MODAL:
-        whisper_model = None  # not needed locally
+
+    reciters = get_available_reciters()
+    if not reciters:
+        print("[quran-align] No pre-computed data available – writing empty word_align.json")
+        word_align_path.write_text("[]", encoding="utf-8")
     else:
-        whisper_model = load_model(device=whisper_device)
-    
-    segment_en_map: Dict[Tuple[float, float], str] = {}
-    
-    for group in groups:
-        # Stage 2 Fallback data
-        whisper_segs = _transcribe_segments(audio_path, group.circle_window, whisper_model)
-        
-        for verse_num, _ in group.verses:
-            try:
-                verse_words = _fetch_verse_words(surah, verse_num)
-                if not verse_words: continue
-            except Exception:
+        reciter = pick_closest_reciter(reciter_name or audio_path.stem)
+        print(f"[quran-align] Using reciter: {reciter} (available: {len(reciters)})")
+
+        for group in groups:
+            verse_contexts = []
+            for verse_num, _ in group.verses:
+                try:
+                    vw = _fetch_verse_words(surah, verse_num)
+                    if vw:
+                        verse_contexts.append((verse_num, vw))
+                except Exception:
+                    continue
+
+            if not verse_contexts:
                 continue
 
-            # --- Stage 1: Forced Alignment (Best Quality) ---
-            aligned_words = forced_aligner.align(
-                audio_path=audio_path,
+            aligns = get_alignments_for_verses(
+                surah=surah,
+                verses=verse_contexts,
+                reciter=reciter,
                 window_start=group.circle_window.start_sec,
-                window_end=group.circle_window.end_sec,
             )
-            
-            temp_aligns = []
-            if aligned_words:
-                cursor = 0
-                for aw in aligned_words:
-                    if aw.score < 0.5:
-                        continue
-                    _, idx = _word_to_translation_from(aw.word, verse_words, cursor)
-                    if idx >= 0:
-                        en = verse_words[idx].get("translation", "")
-                        temp_aligns.append({
-                            "start": aw.start, "end": aw.end, "ar": aw.word,
-                            "en": en, "idx": idx, "ayah": verse_num, "score": aw.score
-                        })
-                        cursor = idx + 1
+            all_word_aligns.extend(aligns)
 
-            # Deduplicate anchors: same verse idx -> keep higher score
-            seen = {}
-            for a in temp_aligns:
-                key = a["idx"]
-                if key not in seen or a["score"] > seen[key]["score"]:
-                    seen[key] = a
-            temp_aligns = list(seen.values())
-            
-            # --- Guard & Fallback Logic ---
-            if _guard_ok(temp_aligns, verse_words):
-                filled = _interpolate_verse(temp_aligns, verse_words, group.circle_window.start_sec, group.circle_window.end_sec, verse_num)
-                all_word_aligns.extend(filled)
-                print(f"[V{verse_num}] ✓ Forced Alignment OK ({len(temp_aligns)} anchors, {len(filled)} total)")
-                continue
+        word_align_path.write_text(
+            json.dumps(all_word_aligns, ensure_ascii=False), encoding="utf-8"
+        )
+        print(f"[quran-align] Written {len(all_word_aligns)} word alignments to {word_align_path}")
 
-            # --- Stage 2: Whisper Timestamps + Smart Match ---
-            print(f"[V{verse_num}] ✗ Forced Alignment failed, trying Whisper Timestamps...")
-            
-            window_aligns_whisper: List[dict] = []
-            cursor = 0
-            for start, end, ar_word in whisper_segs:
-                en_word, idx = _word_to_translation_from(ar_word, verse_words, cursor)
-                if idx >= 0:
-                    window_aligns_whisper.append({
-                        "start": start, "end": end, "ar": ar_word, "en": en_word,
-                        "idx": idx, "ayah": verse_num, "score": 0.0 # No score from this method
-                    })
-                    cursor = idx + 1
-                if en_word and (start, end) not in segment_en_map:
-                    segment_en_map[(start, end)] = en_word
-
-            if _guard_ok(window_aligns_whisper, verse_words):
-                filled = _interpolate_verse(window_aligns_whisper, verse_words, group.circle_window.start_sec, group.circle_window.end_sec, verse_num)
-                all_word_aligns.extend(filled)
-                print(f"[V{verse_num}] ✓ Whisper Timestamps OK ({len(window_aligns_whisper)} anchors, {len(filled)} total)")
-            else:
-                # --- Stage 3: Linear Interpolation (Final Fallback) ---
-                print(f"[V{verse_num}] ✗ Whisper Timestamps failed, using Linear Fallback.")
-                if whisper_segs:
-                    win_start, win_end = whisper_segs[0][0], whisper_segs[-1][1]
-                    n, dur = len(verse_words), win_end - win_start
-                    if n > 0 and dur > 0:
-                        for vi, vw in enumerate(verse_words):
-                            t, t_end = win_start + (vi / n) * dur, win_start + ((vi + 1) / n) * dur
-                            en = vw.get("translation", "")
-                            all_word_aligns.append({
-                                "start": round(t, 4), "end": round(t_end, 4),
-                                "ar": vw["text_uthmani"], "en": en, "idx": vi, "ayah": verse_num, "score": 0.0
-                            })
-    
-    # 4c. Write final alignments
-    word_align_path.write_text(
-        json.dumps(all_word_aligns, ensure_ascii=False), encoding="utf-8"
-    )
-    
-    # 4c. Write segments with English text (circle windows)
+    # 4b. Write segments with English text (circle windows)
     segments_path = BASE_DIR / "output" / "segments" / f"{text_path.stem}.segments"
     segments_path.parent.mkdir(parents=True, exist_ok=True)
     with open(segments_path, "w") as f:
         for entry in all_word_aligns:
-            # We need the segments of the _original_ whisper transcription,
-            # not the aligned words. This means the segment_en_map should be filled from whisper_segs
-            # during Stage 2 fallback.
-            # However, for simplicity now, we will just take the `en` from all_word_aligns.
             if entry.get("en"):
                 f.write(json.dumps({
                     "start": entry["start"],
@@ -554,13 +313,14 @@ def run(
 
     # ------------------------------------------------------------------
     # 5. Sub-Fenster transkribieren + matchen + Mapping patchen
-    #    (existing logic, only for groups with sub_windows)
     # ------------------------------------------------------------------
     groups_with_subs = [g for g in groups if g.sub_windows]
     if not groups_with_subs:
         return
 
-    sub_word_aligns: List[dict] = []
+    whisper_model = None
+    if not USE_MODAL:
+        whisper_model = load_model(device=whisper_device)
 
     for idx, group in enumerate(groups):
         if not group.sub_windows:
@@ -568,7 +328,6 @@ def run(
         if idx + 1 >= len(groups):
             continue
 
-        # Nächste Gruppe → deren Vers-Text ist das Target
         next_group = groups[idx + 1]
         next_verse_text = extract_verse_text(next_group.mapping_line)
         next_verse_num = extract_verse_number(next_group.mapping_line)
@@ -589,46 +348,6 @@ def run(
         )
 
         if session.results:
-            # Word alignment aus session.results extrahieren
-            for result in session.results:
-                for (ar_word, en_word, w_start, w_end, idx) in result.word_alignments:
-                    sub_word_aligns.append({
-                        "start": w_start,
-                        "end": w_end,
-                        "ar": ar_word,
-                        "en": en_word,
-                        "idx": idx,
-                        "ayah": next_verse_num,
-                    })
-
-            # Sub-window segments mit English text an segments file appenden
-            sub_en_map: Dict[Tuple[float, float], str] = {}
-            for r in session.results:
-                for (_, en_word, ws, we, _) in r.word_alignments:
-                    key = (round(ws, 3), round(we, 3))
-                    if en_word and key not in sub_en_map:
-                        sub_en_map[key] = en_word
-            with open(segments_path, "a") as f:
-                for chunk in chunks:
-                    for seg in chunk.segments:
-                        skey = (round(seg.start, 3), round(seg.end, 3))
-                        en_text = sub_en_map.get(skey, "")
-                        if not en_text:
-                            # timenächsten match suchen
-                            best = min(
-                                sub_en_map.keys(),
-                                key=lambda k: abs(k[0] - seg.start),
-                                default=None,
-                            )
-                            if best:
-                                en_text = sub_en_map[best]
-                        f.write(
-                            json.dumps(
-                                {"start": skey[0], "end": skey[1], "text": en_text}
-                            )
-                            + "\n"
-                        )
-
             affected_timestamp = group.mapping_ts
             patch_circlelog(
                 mapping_path=mapping_path,
@@ -636,7 +355,6 @@ def run(
                 session=session,
             )
 
-            # continuation: ungedeckter suffix → circle_entry der nächsten gruppe
             last_span_end = session.results[-1].span.end
             continuation = session.verse_text[last_span_end:].strip()
             first_sub_ts = seconds_to_timestamp(
@@ -663,14 +381,6 @@ def run(
                 cleaned.append(file_line)
             mapping_path.write_text("\n".join(cleaned) + "\n", encoding="utf-8")
 
-    # Sub-window alignments an word_align.json appenden
-    if sub_word_aligns:
-        existing = json.loads(word_align_path.read_text(encoding="utf-8"))
-        existing.extend(sub_word_aligns)
-        word_align_path.write_text(
-            json.dumps(existing, ensure_ascii=False), encoding="utf-8"
-        )
-
 
 # ---------------------------------------------------------------------------
 # CLI
@@ -693,6 +403,11 @@ def main() -> None:
     parser.add_argument(
         "--surah", required=True, type=int, help="Surah-Nummer (z.B. 98)"
     )
+    parser.add_argument(
+        "--reciter", default=None, type=str,
+        help="Reciter-Name für quran-align-Daten (z.B. Alafasy_128kbps). "
+             "Bei None automatische Erkennung aus Audio-Dateiname."
+    )
     args = parser.parse_args()
 
     mapping_path = args.output / (args.text.stem + ".mapping")
@@ -704,6 +419,7 @@ def main() -> None:
         mapping_path=mapping_path,
         surah=args.surah,
         whisper_device=args.device,
+        reciter=args.reciter,
     )
 
 

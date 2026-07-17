@@ -11,7 +11,7 @@ from typing import Any, Optional
 
 import modal
 
-app = modal.App("whispe_rayah-aligner")
+app = modal.App("whispe-ayah-aligner")
 
 _image = (
     modal.Image.debian_slim()

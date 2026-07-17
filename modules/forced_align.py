@@ -22,7 +22,7 @@ def _get_modal_fn():
     global _MODAL_FN
     if _MODAL_FN is None:
         from modal import Function
-        _MODAL_FN = Function.from_name("whispe_rayah-aligner", "forced_align_audio")
+        _MODAL_FN = Function.from_name("whispe-ayah-aligner", "forced_align_audio")
     return _MODAL_FN
 
 
@@ -34,6 +34,7 @@ class ForcedAligner:
         use_modal: bool = False,
     ):
         self.use_modal = use_modal
+        self.global_prompt: Optional[str] = None
         self._cached_audio_path = None
         self._cached_words: List[AlignedWord] = []
 
@@ -75,7 +76,11 @@ class ForcedAligner:
         audio_bytes = audio.astype(np.float32).tobytes()
 
         modal_fn = _get_modal_fn()
-        result = modal_fn.remote(audio_bytes, initial_prompt=transcript)
+        kwargs = {}
+        prompt = self.global_prompt or transcript
+        if prompt is not None:
+            kwargs["initial_prompt"] = prompt
+        result = modal_fn.remote(audio_bytes, **kwargs)
 
         self._cached_audio_path = audio_path
         self._cached_words = [
@@ -88,11 +93,12 @@ class ForcedAligner:
         import whisper_timestamped as whisper
 
         audio = whisper.load_audio(str(audio_path))
+        prompt = self.global_prompt or transcript
         result = whisper.transcribe_timestamped(
             self._model,
             audio,
             language="ar",
-            initial_prompt=transcript,
+            initial_prompt=prompt,
             remove_punctuation_from_words=True,
             compute_word_confidence=True,
         )

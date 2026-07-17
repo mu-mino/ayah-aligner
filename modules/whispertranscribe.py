@@ -451,7 +451,7 @@ def _get_modal_fn():
     global _MODAL_FN
     if _MODAL_FN is None:
         from modal import Function
-        _MODAL_FN = Function.from_name("whispe_rayah-aligner", "transcribe_audio_chunk")
+        _MODAL_FN = Function.from_name("whispe-ayah-aligner", "transcribe_audio_chunk")
     return _MODAL_FN
 
 

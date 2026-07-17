@@ -169,7 +169,7 @@ def _get_modal_transcribe_fn():
     global _MODAL_TRANSCRIBE_FN
     if _MODAL_TRANSCRIBE_FN is None:
         from modal import Function
-        _MODAL_TRANSCRIBE_FN = Function.from_name("whispe_rayah-aligner", "transcribe_audio_chunk")
+        _MODAL_TRANSCRIBE_FN = Function.from_name("whispe-ayah-aligner", "transcribe_audio_chunk")
     return _MODAL_TRANSCRIBE_FN
 
 
@@ -235,22 +235,12 @@ def _guard_ok(aligns: List[dict], verse_words: list) -> bool:
     n_verse = len(verse_words)
     if n_verse == 0: return False
     
-    idxs = [a["idx"] for a in aligns]
-    if len(idxs) != len(set(idxs)): return False  # Duplicates
     if any(a["end"] - a["start"] > 4.0 for a in aligns): return False  # Duration
-    
-    sorted_idxs = sorted(idxs)
-    for i in range(1, len(sorted_idxs)):
-        if sorted_idxs[i] - sorted_idxs[i-1] > 10: return False  # Gaps
-        
-    if len(aligns) / n_verse < 0.3: return False  # Coverage
-    
-    # Confidence score check (if available)
-    if all("score" in a for a in aligns):
+    if any("score" in a and a["score"] > 0.0 for a in aligns):
         avg_score = sum(a["score"] for a in aligns) / len(aligns)
         if avg_score < 0.5:
             return False
-            
+    
     return True
 
 
@@ -443,6 +433,12 @@ def run(
     
     # Initialize Aligners
     forced_aligner = ForcedAligner(device=whisper_device, use_modal=USE_MODAL)
+    forced_aligner.global_prompt = " ".join(
+        vw["text_uthmani"]
+        for group in groups
+        for verse_num, _ in group.verses
+        for vw in _fetch_verse_words(surah, verse_num)
+    )
     if USE_MODAL:
         whisper_model = None  # not needed locally
     else:
@@ -462,10 +458,8 @@ def run(
                 continue
 
             # --- Stage 1: Forced Alignment (Best Quality) ---
-            verse_text = " ".join(vw["text_uthmani"] for vw in verse_words)
             aligned_words = forced_aligner.align(
                 audio_path=audio_path,
-                transcript=verse_text,
                 window_start=group.circle_window.start_sec,
                 window_end=group.circle_window.end_sec,
             )
@@ -474,6 +468,8 @@ def run(
             if aligned_words:
                 cursor = 0
                 for aw in aligned_words:
+                    if aw.score < 0.5:
+                        continue
                     _, idx = _word_to_translation_from(aw.word, verse_words, cursor)
                     if idx >= 0:
                         en = verse_words[idx].get("translation", "")
@@ -482,6 +478,14 @@ def run(
                             "en": en, "idx": idx, "ayah": verse_num, "score": aw.score
                         })
                         cursor = idx + 1
+
+            # Deduplicate anchors: same verse idx -> keep higher score
+            seen = {}
+            for a in temp_aligns:
+                key = a["idx"]
+                if key not in seen or a["score"] > seen[key]["score"]:
+                    seen[key] = a
+            temp_aligns = list(seen.values())
             
             # --- Guard & Fallback Logic ---
             if _guard_ok(temp_aligns, verse_words):

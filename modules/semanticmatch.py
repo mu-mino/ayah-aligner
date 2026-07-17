@@ -273,11 +273,20 @@ def _get_stems(word: str) -> set:
 
 def _word_to_translation_from(arabic_word: str, verse_words: list, min_idx: int = 0) -> Tuple[str, int]:
     chunk_stems = _get_stems(arabic_word)
+    norm_word = _normalize_arabic(arabic_word)
 
     for idx in range(min_idx, len(verse_words)):
         w = verse_words[idx]
         verse_stems = _get_stems(w["text_uthmani"])
         if chunk_stems & verse_stems:
+            norm_verse = _normalize_arabic(w["text_uthmani"])
+            shorter = min(len(norm_word), len(norm_verse))
+            if shorter > 0:
+                match_len = SequenceMatcher(None, norm_word, norm_verse).find_longest_match(
+                    0, len(norm_word), 0, len(norm_verse)
+                ).size
+                if match_len / shorter < 0.7:
+                    continue
             t = w.get("translation", "")
             text = t if isinstance(t, str) else ""
             if re.match(r"^\(\d+\)$", text.strip()):
@@ -292,7 +301,15 @@ def _word_to_translation_from(arabic_word: str, verse_words: list, min_idx: int 
     for idx in range(min_idx, len(verse_words)):
         w = verse_words[idx]
         norm_verse = _normalize_arabic(w["text_uthmani"])
-        score = SequenceMatcher(None, norm_word, norm_verse).ratio()
+        shorter = min(len(norm_word), len(norm_verse))
+        if shorter > 0:
+            sm = SequenceMatcher(None, norm_word, norm_verse)
+            match_len = sm.find_longest_match(0, len(norm_word), 0, len(norm_verse)).size
+            if match_len / shorter < 0.7:
+                continue
+            score = sm.ratio()
+        else:
+            score = 0.0
         if score > best_score:
             best_score = score
             best_idx = idx

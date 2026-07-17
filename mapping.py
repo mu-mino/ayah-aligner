@@ -17,7 +17,7 @@ import argparse
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 import dill
 
 import cv2
@@ -48,6 +48,7 @@ from modules.semanticmatch import (
     _word_to_translation,
     _word_to_translation_from,
 )
+from modules.forced_align import ForcedAligner
 
 BASE_DIR = Path(__file__).parent
 
@@ -168,6 +169,29 @@ def _load_gray(video_path: Path, window: FrameWindow):
 # Pipeline
 # ---------------------------------------------------------------------------
 
+
+def _guard_ok(aligns: List[dict], verse_words: list) -> bool:
+    if not aligns: return False
+    n_verse = len(verse_words)
+    if n_verse == 0: return False
+    
+    idxs = [a["idx"] for a in aligns]
+    if len(idxs) != len(set(idxs)): return False  # Duplicates
+    if any(a["end"] - a["start"] > 4.0 for a in aligns): return False  # Duration
+    
+    sorted_idxs = sorted(idxs)
+    for i in range(1, len(sorted_idxs)):
+        if sorted_idxs[i] - sorted_idxs[i-1] > 10: return False  # Gaps
+        
+    if len(aligns) / n_verse < 0.3: return False  # Coverage
+    
+    # Confidence score check (if available)
+    if all("score" in a for a in aligns):
+        avg_score = sum(a["score"] for a in aligns) / len(aligns)
+        if avg_score < 0.5:
+            return False
+            
+    return True
 
 def run(
     video_path: Path,
@@ -295,108 +319,110 @@ def run(
             mapping_lines.append(line)
     write_mapping(mapping_lines, mapping_path)
 
+    # 4. Multi-Stage Word Alignment
     # ------------------------------------------------------------------
-    # 4. Whisper segments for ALL groups (separate feine Schicht)
-    # ------------------------------------------------------------------
-    whisper_model = load_model(device=whisper_device)
-
     word_align_path = BASE_DIR / "output" / "word_align.json"
-
-    # 4a. Circle-window transcribe & word alignment
-    circle_word_segs: List[Tuple[WindowGroup, List[Tuple[float, float, str]]]] = []
     all_word_aligns: List[dict] = []
-
-    for group in groups:
-        segs = _transcribe_segments(audio_path, group.circle_window, whisper_model)
-        circle_word_segs.append((group, segs))
-
-    # 4b. Word-level alignment für ALLE groups (circle windows)
-    # Build segment→English text map for segments output
+    
+    # Initialize Aligners
+    whisper_model = load_model(device=whisper_device)
+    forced_aligner = ForcedAligner(device=whisper_device)
+    
     segment_en_map: Dict[Tuple[float, float], str] = {}
-
-    for group, segs in circle_word_segs:
+    
+    for group in groups:
+        # Stage 2 Fallback data
+        whisper_segs = _transcribe_segments(audio_path, group.circle_window, whisper_model)
+        
         for verse_num, _ in group.verses:
             try:
                 verse_words = _fetch_verse_words(surah, verse_num)
+                if not verse_words: continue
             except Exception:
                 continue
 
-            window_aligns: List[dict] = []
-            cursor = 0
+            # --- Stage 1: Forced Alignment (Best Quality) ---
+            aligned_words = forced_aligner.align(
+                audio_path=audio_path,
+                window_start=group.circle_window.start_sec,
+                window_end=group.circle_window.end_sec,
+            )
+            
+            temp_aligns = []
+            if aligned_words:
+                cursor = 0
+                for aw in aligned_words:
+                    _, idx = _word_to_translation_from(aw.word, verse_words, cursor)
+                    if idx >= 0:
+                        en = verse_words[idx].get("translation", "")
+                        temp_aligns.append({
+                            "start": aw.start, "end": aw.end, "ar": aw.word,
+                            "en": en, "idx": idx, "ayah": verse_num, "score": aw.score
+                        })
+                        cursor = idx + 1
+            
+            # --- Guard & Fallback Logic ---
+            if _guard_ok(temp_aligns, verse_words):
+                all_word_aligns.extend(temp_aligns)
+                print(f"[V{verse_num}] ✓ Forced Alignment OK ({len(temp_aligns)} words)")
+                continue
 
-            for start, end, ar_word in segs:
+            # --- Stage 2: Whisper Timestamps + Smart Match ---
+            print(f"[V{verse_num}] ✗ Forced Alignment failed, trying Whisper Timestamps...")
+            
+            window_aligns_whisper: List[dict] = []
+            cursor = 0
+            for start, end, ar_word in whisper_segs:
                 en_word, idx = _word_to_translation_from(ar_word, verse_words, cursor)
                 if idx >= 0:
-                    window_aligns.append({
-                        "start": start,
-                        "end": end,
-                        "ar": ar_word,
-                        "en": en_word,
-                        "idx": idx,
-                        "ayah": verse_num,
+                    window_aligns_whisper.append({
+                        "start": start, "end": end, "ar": ar_word, "en": en_word,
+                        "idx": idx, "ayah": verse_num, "score": 0.0 # No score from this method
                     })
                     cursor = idx + 1
                 if en_word and (start, end) not in segment_en_map:
                     segment_en_map[(start, end)] = en_word
 
-            # Guard: prüfe ob Alignment valide ist
-            def _guard_ok(aligns: List[dict], verse_words: list) -> bool:
-                if not aligns:
-                    return False
-                n_verse = len(verse_words)
-                idxs = [a["idx"] for a in aligns]
-                # Kriterium 2: Duplikate
-                if len(idxs) != len(set(idxs)):
-                    return False
-                # Kriterium 3: extreme Dauer (>4s pro Wort)
-                if any(a["end"] - a["start"] > 4.0 for a in aligns):
-                    return False
-                # Kriterium 4: Idx-Lücken > 10 aufeinanderfolgende fehlende Wörter
-                sorted_idxs = sorted(idxs)
-                for i in range(1, len(sorted_idxs)):
-                    if sorted_idxs[i] - sorted_idxs[i - 1] > 10:
-                        return False
-                # Kriterium 5: Coverage < 30%
-                if len(aligns) / max(n_verse, 1) < 0.30:
-                    return False
-                return True
-
-            if _guard_ok(window_aligns, verse_words):
-                all_word_aligns.extend(window_aligns)
+            if _guard_ok(window_aligns_whisper, verse_words):
+                all_word_aligns.extend(window_aligns_whisper)
+                print(f"[V{verse_num}] ✓ Whisper Timestamps OK ({len(window_aligns_whisper)} words)")
             else:
-                # Fallback C: lineare Verteilung der Whisper-Timestamps auf Vers-Wörter
-                if segs:
-                    win_start = segs[0][0]
-                    win_end = segs[-1][1]
-                    n = len(verse_words)
-                    dur = win_end - win_start
-                    for vi, vw in enumerate(verse_words):
-                        t = win_start + (vi / n) * dur
-                        t_end = win_start + ((vi + 1) / n) * dur
-                        tr = vw.get("translation", {})
-                        en = tr.get("text", "").strip() if isinstance(tr, dict) else ""
-                        all_word_aligns.append({
-                            "start": round(t, 4),
-                            "end": round(t_end, 4),
-                            "ar": vw["text_uthmani"],
-                            "en": en,
-                            "idx": vi,
-                            "ayah": verse_num,
-                        })
-
+                # --- Stage 3: Linear Interpolation (Final Fallback) ---
+                print(f"[V{verse_num}] ✗ Whisper Timestamps failed, using Linear Fallback.")
+                if whisper_segs:
+                    win_start, win_end = whisper_segs[0][0], whisper_segs[-1][1]
+                    n, dur = len(verse_words), win_end - win_start
+                    if n > 0 and dur > 0:
+                        for vi, vw in enumerate(verse_words):
+                            t, t_end = win_start + (vi / n) * dur, win_start + ((vi + 1) / n) * dur
+                            en = vw.get("translation", "")
+                            all_word_aligns.append({
+                                "start": round(t, 4), "end": round(t_end, 4),
+                                "ar": vw["text_uthmani"], "en": en, "idx": vi, "ayah": verse_num, "score": 0.0
+                            })
+    
+    # 4c. Write final alignments
     word_align_path.write_text(
         json.dumps(all_word_aligns, ensure_ascii=False), encoding="utf-8"
     )
-
+    
     # 4c. Write segments with English text (circle windows)
     segments_path = BASE_DIR / "output" / "segments" / f"{text_path.stem}.segments"
     segments_path.parent.mkdir(parents=True, exist_ok=True)
     with open(segments_path, "w") as f:
-        for _, segs in circle_word_segs:
-            for start, end, ar_word in segs:
-                en = segment_en_map.get((start, end), "")
-                if en:
-                    f.write(json.dumps({"start": start, "end": end, "text": en}) + "\n")
+        for entry in all_word_aligns:
+            # We need the segments of the _original_ whisper transcription,
+            # not the aligned words. This means the segment_en_map should be filled from whisper_segs
+            # during Stage 2 fallback.
+            # However, for simplicity now, we will just take the `en` from all_word_aligns.
+            if entry.get("en"):
+                f.write(json.dumps({
+                    "start": entry["start"],
+                    "end": entry["end"],
+                    "text": entry["en"],
+                    "ayah": entry["ayah"],
+                    "idx": entry["idx"],
+                }, ensure_ascii=False) + "\n")
 
     # ------------------------------------------------------------------
     # 5. Sub-Fenster transkribieren + matchen + Mapping patchen

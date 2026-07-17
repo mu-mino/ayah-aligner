@@ -163,6 +163,16 @@ def _transcribe_segments_local(
     return segments
 
 
+_MODAL_TRANSCRIBE_FN = None
+
+def _get_modal_transcribe_fn():
+    global _MODAL_TRANSCRIBE_FN
+    if _MODAL_TRANSCRIBE_FN is None:
+        from modal import Function
+        _MODAL_TRANSCRIBE_FN = Function.from_name("whispe_rayah-aligner", "transcribe_audio_chunk")
+    return _MODAL_TRANSCRIBE_FN
+
+
 def _transcribe_segments_modal(
     audio_path: Path,
     window: FrameWindow,
@@ -170,7 +180,6 @@ def _transcribe_segments_modal(
     """Transkribiert ein Audio-Fenster via Modal (GPU serverless)."""
     import tempfile
     import numpy as np
-    from modules.whisper_modal import transcribe_audio_chunk as _modal_transcribe
 
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
         tmp_path = Path(tmp.name)
@@ -189,7 +198,7 @@ def _transcribe_segments_modal(
     finally:
         tmp_path.unlink(missing_ok=True)
 
-    modal_fn = _modal_transcribe
+    modal_fn = _get_modal_transcribe_fn()
     result = modal_fn.remote(audio_bytes)
 
     offset = window.start_sec
@@ -243,6 +252,63 @@ def _guard_ok(aligns: List[dict], verse_words: list) -> bool:
             return False
             
     return True
+
+
+def _interpolate_verse(
+    aligns: List[dict],
+    verse_words: list,
+    window_start: float,
+    window_end: float,
+    verse_num: int,
+) -> List[dict]:
+    """Interpoliert zwischen Anchor-Wörtern, deckt alle Vers-Wörter ab."""
+    sorted_a = sorted(aligns, key=lambda a: a["idx"])
+    n = len(verse_words)
+    result = []
+
+    def _make(vw, idx, start, end):
+        return {
+            "start": round(start, 4), "end": round(end, 4),
+            "ar": vw["text_uthmani"], "en": vw.get("translation", ""),
+            "idx": idx, "ayah": verse_num, "score": 0.0,
+        }
+
+    # Words before first anchor
+    first = sorted_a[0]
+    if first["idx"] > 0:
+        seg_len = first["start"] - window_start
+        for i in range(first["idx"]):
+            t = window_start + (i / first["idx"]) * seg_len
+            t_e = window_start + ((i + 1) / first["idx"]) * seg_len
+            result.append(_make(verse_words[i], i, t, t_e))
+
+    # Anchors + gaps between
+    for i, a in enumerate(sorted_a):
+        result.append(a)
+        if i + 1 < len(sorted_a):
+            nxt = sorted_a[i + 1]
+            gap = nxt["idx"] - a["idx"] - 1
+            if gap > 0:
+                seg_len = nxt["start"] - a["end"]
+                for j in range(gap):
+                    vi = a["idx"] + 1 + j
+                    t = a["end"] + (j / gap) * seg_len
+                    t_e = a["end"] + ((j + 1) / gap) * seg_len
+                    result.append(_make(verse_words[vi], vi, t, t_e))
+
+    # Words after last anchor
+    last = sorted_a[-1]
+    remaining = n - last["idx"] - 1
+    if remaining > 0:
+        seg_len = window_end - last["end"]
+        for j in range(remaining):
+            vi = last["idx"] + 1 + j
+            t = last["end"] + (j / remaining) * seg_len
+            t_e = last["end"] + ((j + 1) / remaining) * seg_len
+            result.append(_make(verse_words[vi], vi, t, t_e))
+
+    return result
+
 
 def run(
     video_path: Path,
@@ -396,8 +462,10 @@ def run(
                 continue
 
             # --- Stage 1: Forced Alignment (Best Quality) ---
+            verse_text = " ".join(vw["text_uthmani"] for vw in verse_words)
             aligned_words = forced_aligner.align(
                 audio_path=audio_path,
+                transcript=verse_text,
                 window_start=group.circle_window.start_sec,
                 window_end=group.circle_window.end_sec,
             )
@@ -417,8 +485,9 @@ def run(
             
             # --- Guard & Fallback Logic ---
             if _guard_ok(temp_aligns, verse_words):
-                all_word_aligns.extend(temp_aligns)
-                print(f"[V{verse_num}] ✓ Forced Alignment OK ({len(temp_aligns)} words)")
+                filled = _interpolate_verse(temp_aligns, verse_words, group.circle_window.start_sec, group.circle_window.end_sec, verse_num)
+                all_word_aligns.extend(filled)
+                print(f"[V{verse_num}] ✓ Forced Alignment OK ({len(temp_aligns)} anchors, {len(filled)} total)")
                 continue
 
             # --- Stage 2: Whisper Timestamps + Smart Match ---
@@ -438,8 +507,9 @@ def run(
                     segment_en_map[(start, end)] = en_word
 
             if _guard_ok(window_aligns_whisper, verse_words):
-                all_word_aligns.extend(window_aligns_whisper)
-                print(f"[V{verse_num}] ✓ Whisper Timestamps OK ({len(window_aligns_whisper)} words)")
+                filled = _interpolate_verse(window_aligns_whisper, verse_words, group.circle_window.start_sec, group.circle_window.end_sec, verse_num)
+                all_word_aligns.extend(filled)
+                print(f"[V{verse_num}] ✓ Whisper Timestamps OK ({len(window_aligns_whisper)} anchors, {len(filled)} total)")
             else:
                 # --- Stage 3: Linear Interpolation (Final Fallback) ---
                 print(f"[V{verse_num}] ✗ Whisper Timestamps failed, using Linear Fallback.")

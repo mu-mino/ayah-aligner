@@ -7,7 +7,7 @@ VAD und Audio-Extraktion bleiben lokal.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Optional
 
 import modal
 
@@ -114,6 +114,7 @@ def transcribe_audio_chunk(
 def forced_align_audio(
     audio_bytes: bytes,
     language: str = "ar",
+    initial_prompt: Optional[str] = None,
 ) -> list[dict]:
     import numpy as np
     import whisper_timestamped as whisper
@@ -125,6 +126,7 @@ def forced_align_audio(
         model,
         audio,
         language=language,
+        initial_prompt=initial_prompt,
         remove_punctuation_from_words=True,
         compute_word_confidence=True,
     )

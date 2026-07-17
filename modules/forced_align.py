@@ -55,15 +55,15 @@ class ForcedAligner:
         window_end: Optional[float] = None,
     ) -> List[AlignedWord]:
         if self.use_modal:
-            all_words = self._transcribe_modal(audio_path)
+            all_words = self._transcribe_modal(audio_path, transcript=transcript)
         else:
-            all_words = self._transcribe_local(audio_path)
+            all_words = self._transcribe_local(audio_path, transcript=transcript)
 
         if window_end is None:
             return [w for w in all_words if w.start >= window_start]
         return [w for w in all_words if w.start >= window_start and w.end <= window_end]
 
-    def _transcribe_modal(self, audio_path: Path) -> List[AlignedWord]:
+    def _transcribe_modal(self, audio_path: Path, transcript: Optional[str] = None) -> List[AlignedWord]:
         if self._cached_audio_path == audio_path:
             return self._cached_words
 
@@ -75,7 +75,7 @@ class ForcedAligner:
         audio_bytes = audio.astype(np.float32).tobytes()
 
         modal_fn = _get_modal_fn()
-        result = modal_fn.remote(audio_bytes)
+        result = modal_fn.remote(audio_bytes, initial_prompt=transcript)
 
         self._cached_audio_path = audio_path
         self._cached_words = [
@@ -84,7 +84,7 @@ class ForcedAligner:
         ]
         return self._cached_words
 
-    def _transcribe_local(self, audio_path: Path) -> List[AlignedWord]:
+    def _transcribe_local(self, audio_path: Path, transcript: Optional[str] = None) -> List[AlignedWord]:
         import whisper_timestamped as whisper
 
         audio = whisper.load_audio(str(audio_path))
@@ -92,6 +92,7 @@ class ForcedAligner:
             self._model,
             audio,
             language="ar",
+            initial_prompt=transcript,
             remove_punctuation_from_words=True,
             compute_word_confidence=True,
         )

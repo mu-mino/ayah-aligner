@@ -38,6 +38,7 @@ from modules.whispertranscribe import (
     load_model,
     _extract_audio_chunk,
     AUDIO_SAMPLE_RATE,
+    USE_MODAL,
 )
 from modules.semanticmatch import (
     run_matching,
@@ -110,15 +111,26 @@ class WindowGroup:
 def _transcribe_segments(
     audio_path: Path,
     window: FrameWindow,
-    model,
+    model=None,
 ) -> List[Tuple[float, float, str]]:
     """Separate Transkription nur für feine Segment-Grenzen.
 
     Ruft faster-whisper direkt auf (nicht den WhisperX-Wrapper)
     mit feinerer VAD-Schwelle und word_timestamps=True.
     Kein Stille-Padding, keine Pausen-Kompression.
-    Die bestehende WhisperX-Pipeline (transcribe_chunks) bleibt unverändert.
+
+    Wenn USE_MODAL=True, wird die GPU-Inferenz auf Modal ausgelagert.
     """
+    if USE_MODAL:
+        return _transcribe_segments_modal(audio_path, window)
+    return _transcribe_segments_local(audio_path, window, model)
+
+
+def _transcribe_segments_local(
+    audio_path: Path,
+    window: FrameWindow,
+    model,
+) -> List[Tuple[float, float, str]]:
     import tempfile
 
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
@@ -148,6 +160,45 @@ def _transcribe_segments(
             start = seg.start + offset
             end = seg.end + offset
             segments.append((round(start, 3), round(end, 3), seg.text.strip()))
+    return segments
+
+
+def _transcribe_segments_modal(
+    audio_path: Path,
+    window: FrameWindow,
+) -> List[Tuple[float, float, str]]:
+    """Transkribiert ein Audio-Fenster via Modal (GPU serverless)."""
+    import tempfile
+    import numpy as np
+    from modules.whisper_modal import transcribe_audio_chunk as _modal_transcribe
+
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+        tmp_path = Path(tmp.name)
+    try:
+        _extract_audio_chunk(audio_path, window.start_sec, window.end_sec, tmp_path)
+        import soundfile as sf
+        audio, sr = sf.read(tmp_path)
+        if len(audio.shape) > 1:
+            audio = audio.mean(axis=1)
+        if sr != AUDIO_SAMPLE_RATE:
+            import scipy.signal
+            audio = scipy.signal.resample(
+                audio, int(len(audio) * AUDIO_SAMPLE_RATE / sr)
+            )
+        audio_bytes = audio.astype(np.float32).tobytes()
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+    modal_fn = _modal_transcribe
+    result = modal_fn.remote(audio_bytes)
+
+    offset = window.start_sec
+    segments = []
+    for seg in result["segments"]:
+        for w in seg.get("words", []):
+            start = w["start"] + offset
+            end = w["end"] + offset
+            segments.append((round(start, 3), round(end, 3), w["word"]))
     return segments
 
 
@@ -325,8 +376,11 @@ def run(
     all_word_aligns: List[dict] = []
     
     # Initialize Aligners
-    whisper_model = load_model(device=whisper_device)
-    forced_aligner = ForcedAligner(device=whisper_device)
+    forced_aligner = ForcedAligner(device=whisper_device, use_modal=USE_MODAL)
+    if USE_MODAL:
+        whisper_model = None  # not needed locally
+    else:
+        whisper_model = load_model(device=whisper_device)
     
     segment_en_map: Dict[Tuple[float, float], str] = {}
     

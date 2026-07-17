@@ -1,5 +1,5 @@
 """
-Modal-Integration für WhisperX-Inferenz auf GPU (serverless).
+Modal-Integration für WhisperX + whisper-timestamped auf GPU (serverless).
 
 Nur die GPU-intensive Modell-Inferenz wird auf Modal ausgelagert.
 VAD und Audio-Extraktion bleiben lokal.
@@ -19,6 +19,7 @@ _image = (
         "whisperx",
         "torch",
         "numpy",
+        "whisper-timestamped",
     )
 )
 
@@ -102,3 +103,39 @@ def transcribe_audio_chunk(
         })
 
     return {"segments": segments}
+
+
+@app.function(
+    image=_image,
+    gpu="A10G",
+    scaledown_window=300,
+    timeout=600,
+)
+def forced_align_audio(
+    audio_bytes: bytes,
+    language: str = "ar",
+) -> list[dict]:
+    import numpy as np
+    import whisper_timestamped as whisper
+
+    audio = np.frombuffer(audio_bytes, dtype=np.float32).copy()
+
+    model = whisper.load_model("large-v2", device="cuda")
+    result = whisper.transcribe_timestamped(
+        model,
+        audio,
+        language=language,
+        remove_punctuation_from_words=True,
+        compute_word_confidence=True,
+    )
+
+    words = []
+    for segment in result.get("segments", []):
+        for word in segment.get("words", []):
+            words.append({
+                "text": word["text"],
+                "start": float(word["start"]),
+                "end": float(word["end"]),
+                "confidence": float(word["confidence"]),
+            })
+    return words

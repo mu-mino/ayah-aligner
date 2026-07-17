@@ -59,7 +59,7 @@ def transcribe_audio_chunk(
     audio = np.frombuffer(audio_bytes, dtype=np.float32)
 
     model = whisperx.load_model(
-        "large-v2",
+        "large-v3",
         device="cuda",
         compute_type="float16",
         language=language,

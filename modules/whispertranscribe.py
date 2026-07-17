@@ -30,7 +30,7 @@ _WHISPER_CACHE_DIR: Path = Path(__file__).resolve().parent.parent / "data" / "wh
 # Konfiguration
 # ---------------------------------------------------------------------------
 
-WHISPER_MODEL: str = "large-v2"
+WHISPER_MODEL: str = "large-v3"
 WHISPER_LANGUAGE: str = "ar"
 WHISPER_COMPUTE_TYPE: str = "float16"  # "int8" für CPU ohne VRAM
 AUDIO_SAMPLE_RATE: int = 16000  # WhisperX erwartet 16 kHz

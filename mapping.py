@@ -43,13 +43,9 @@ from modules.semanticmatch import (
     patch_circlelog,
     extract_verse_text,
     extract_verse_number,
-    _fetch_verse_words,
 )
-from modules.quran_align import get_alignments_for_verses, pick_closest_reciter, get_available_reciters
 
 BASE_DIR = Path(__file__).parent
-
-reciter_name: Optional[str] = None
 
 # ---------------------------------------------------------------------------
 # Interne Datenstruktur
@@ -135,10 +131,7 @@ def run(
     mapping_path: Path,
     surah: int,
     whisper_device: Optional[str] = None,
-    reciter: Optional[str] = None,
 ) -> None:
-    global reciter_name
-    reciter_name = reciter
     """
     Führt die vollständige Pipeline aus.
 
@@ -257,62 +250,8 @@ def run(
             mapping_lines.append(line)
     write_mapping(mapping_lines, mapping_path)
 
-    # 4. Word Alignment via Quran-Align pre-computed data
     # ------------------------------------------------------------------
-    word_align_path = BASE_DIR / "output" / "word_align.json"
-    word_align_path.parent.mkdir(parents=True, exist_ok=True)
-    all_word_aligns: List[dict] = []
-
-    reciters = get_available_reciters()
-    if not reciters:
-        print("[quran-align] No pre-computed data available – writing empty word_align.json")
-        word_align_path.write_text("[]", encoding="utf-8")
-    else:
-        reciter = pick_closest_reciter(reciter_name or audio_path.stem)
-        print(f"[quran-align] Using reciter: {reciter} (available: {len(reciters)})")
-
-        for group in groups:
-            verse_contexts = []
-            for verse_num, _ in group.verses:
-                try:
-                    vw = _fetch_verse_words(surah, verse_num)
-                    if vw:
-                        verse_contexts.append((verse_num, vw))
-                except Exception:
-                    continue
-
-            if not verse_contexts:
-                continue
-
-            aligns = get_alignments_for_verses(
-                surah=surah,
-                verses=verse_contexts,
-                reciter=reciter,
-                window_start=group.circle_window.start_sec,
-            )
-            all_word_aligns.extend(aligns)
-
-        word_align_path.write_text(
-            json.dumps(all_word_aligns, ensure_ascii=False), encoding="utf-8"
-        )
-        print(f"[quran-align] Written {len(all_word_aligns)} word alignments to {word_align_path}")
-
-    # 4b. Write segments with English text (circle windows)
-    segments_path = BASE_DIR / "output" / "segments" / f"{text_path.stem}.segments"
-    segments_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(segments_path, "w") as f:
-        for entry in all_word_aligns:
-            if entry.get("en"):
-                f.write(json.dumps({
-                    "start": entry["start"],
-                    "end": entry["end"],
-                    "text": entry["en"],
-                    "ayah": entry["ayah"],
-                    "idx": entry["idx"],
-                }, ensure_ascii=False) + "\n")
-
-    # ------------------------------------------------------------------
-    # 5. Sub-Fenster transkribieren + matchen + Mapping patchen
+    # 4. Sub-Fenster transkribieren + matchen + Mapping patchen
     # ------------------------------------------------------------------
     groups_with_subs = [g for g in groups if g.sub_windows]
     if not groups_with_subs:
@@ -403,11 +342,6 @@ def main() -> None:
     parser.add_argument(
         "--surah", required=True, type=int, help="Surah-Nummer (z.B. 98)"
     )
-    parser.add_argument(
-        "--reciter", default=None, type=str,
-        help="Reciter-Name für quran-align-Daten (z.B. Alafasy_128kbps). "
-             "Bei None automatische Erkennung aus Audio-Dateiname."
-    )
     args = parser.parse_args()
 
     mapping_path = args.output / (args.text.stem + ".mapping")
@@ -419,7 +353,6 @@ def main() -> None:
         mapping_path=mapping_path,
         surah=args.surah,
         whisper_device=args.device,
-        reciter=args.reciter,
     )
 
 

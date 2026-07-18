@@ -214,148 +214,6 @@ def karaoke_reveal_words(text: str) -> str:
     return r"\N".join(rendered_lines)
 
 
-def _progressive_word_lines(
-    text: str,
-    entry_start: float,
-    entry_end: float,
-    word_aligns: List[dict],
-    font_size: int = 42,
-    video_width: int = 1356,
-    video_height: int = 638,
-) -> List[Tuple[str, float, float]]:
-    aligns_sorted = sorted(
-        [wa for wa in word_aligns if wa.get("start") is not None and wa.get("end") is not None],
-        key=lambda x: (x.get("ayah", 0), x.get("idx", 0)),
-    )
-
-    wrapped_lines = text.split("\n")
-    word_entries = []
-    for li, raw_line in enumerate(wrapped_lines):
-        if not raw_line.strip():
-            continue
-        tokens = raw_line.split()
-        current_verse = None
-        pos_in_verse = 0
-        for t in tokens:
-            m = re.match(r"^(\d+):$", t)
-            if m:
-                current_verse = int(m.group(1))
-                pos_in_verse = 0
-            else:
-                clean = re.sub(r'\{[^}]*\}', '', t)
-                if not clean:
-                    continue
-                if re.search(r'[\(\)\[\]]', clean):
-                    continue
-                word_entries.append((clean, li, current_verse, pos_in_verse))
-                pos_in_verse += 1
-
-    if not word_entries:
-        return []
-
-    num_words = len(word_entries)
-
-    if not aligns_sorted:
-        lines_text = []
-        for li in range(len(wrapped_lines)):
-            words_in_line = [w for w, l, v, p in word_entries if l == li]
-            if words_in_line:
-                lines_text.append(" ".join(words_in_line))
-        full_text = r"\N".join(lines_text)
-        return [(full_text, entry_start, entry_end)]
-
-    timing_lookup = {}
-    for wa in aligns_sorted:
-        timing_lookup[(wa["ayah"], wa["idx"])] = (wa["start"], wa["end"])
-
-    word_timings: List[Optional[Tuple[float, float]]] = []
-    for word, li, verse, pos in word_entries:
-        key = (verse, pos) if verse is not None else None
-        if key and key in timing_lookup:
-            word_timings.append(timing_lookup[key])
-        else:
-            word_timings.append(None)
-
-    i = 0
-    while i < num_words:
-        if word_timings[i] is not None:
-            i += 1
-            continue
-        j = i
-        while j < num_words and word_timings[j] is None:
-            j += 1
-        prev_end = entry_start
-        if i > 0 and word_timings[i - 1] is not None:
-            prev_end = word_timings[i - 1][1]
-        next_start = entry_end
-        if j < num_words and word_timings[j] is not None:
-            next_start = word_timings[j][0]
-        gap = next_start - prev_end
-        if gap <= 0:
-            gap = max(entry_end - prev_end, 0.001)
-        count = j - i
-        for k in range(count):
-            t_start = prev_end + (gap * k) / count
-            t_end = prev_end + (gap * (k + 1)) / count
-            word_timings[i + k] = (t_start, t_end)
-        i = j
-
-    for i in range(1, num_words):
-        prev_start = word_timings[i - 1][0]
-        cur_start, cur_end = word_timings[i]
-        if cur_start < prev_start:
-            word_timings[i] = (cur_start, max(cur_end, cur_start + 0.001))
-
-    # Shift all timestamps so the earliest word starts at entry_start
-    if word_timings:
-        earliest = min(s for s, e in word_timings)
-        if earliest < entry_start:
-            shift = entry_start - earliest
-            word_timings = [(s + shift, e + shift) for s, e in word_timings]
-
-    # Clamp all timestamps within [entry_start, entry_end]
-    for i in range(num_words):
-        s, e = word_timings[i]
-        s = max(s, entry_start)
-        s = min(s, entry_end)
-        e = min(e, entry_end)
-        e = max(e, s + 0.001)
-        word_timings[i] = (s, e)
-
-    result: List[Tuple[str, float, float]] = []
-    for i in range(num_words):
-        cur_start, cur_end = word_timings[i]
-        next_start = word_timings[i + 1][0] if i + 1 < num_words else entry_end
-        line_end = next_start if next_start >= cur_start + 0.01 else cur_start + 0.01
-
-        lines_visible = []
-        for li_w in range(len(wrapped_lines)):
-            indices = [j for j, (w, l, v, p) in enumerate(word_entries) if l == li_w]
-            if not indices:
-                continue
-            parts = []
-            for j in indices:
-                w = word_entries[j][0]
-                if i <= j <= i + 3:
-                    colored = re.sub(r'\\c&H[0-9A-Fa-f]+&?', r'\\c&H00A5FF&', w)
-                    if colored == w:
-                        parts.append(rf"{{\c&H00A5FF&}}{w}{{\c}}")
-                    else:
-                        parts.append(colored)
-                else:
-                    parts.append(w)
-            lines_visible.append(" ".join(parts))
-
-        if not lines_visible:
-            lines_visible.append(word_entries[i][0])
-        line_text = r"\N".join(lines_visible)
-        result.append((line_text, cur_start, line_end))
-
-    if result:
-        result[-1] = (result[-1][0], result[-1][1], entry_end)
-    return result
-
-
 def normalize(word: str) -> str:
     return re.sub(r"[^\w]", "", word).strip()
 
@@ -534,7 +392,6 @@ def build_ass(
     duration,
     font_name="Cormorant Garamond",
     treat_first_as_header: bool = True,
-    word_alignments: Optional[List[dict]] = None,
 ):
     font_size = max(42, int(height * 0.052))
     line_height = int(round(font_size * 1.25))
@@ -587,12 +444,6 @@ def build_ass(
             highlighted if highlighted else e.text, width, font_size
         )
 
-        wa_for_entry = (
-            [wa for wa in word_alignments if wa.get("ayah") in verse_nums]
-            if word_alignments
-            else []
-        )
-
         line_count = wrapped.count("\n") + 1
         x = int(width * 0.5)
         y = int(height * (0.72 if line_count == 5 else 0.75))
@@ -607,15 +458,11 @@ def build_ass(
             )
             continue
 
-        word_lines = _progressive_word_lines(
-            wrapped, start, end, wa_for_entry,
-            font_size=font_size, video_width=width, video_height=height,
+        txt = karaoke_reveal_words(wrapped)
+        line_tags = rf"\an5\pos({x},{y_adjusted})\bord1\blur0\fad(120,150)"
+        events.append(
+            f"Dialogue: 0,{sec_to_ass_time(start)},{sec_to_ass_time(end)},Overlay,,0,0,0,,{{{line_tags}}}{txt}"
         )
-        for line_text, w_start, w_end in word_lines:
-            line_tags = rf"\an5\pos({x},{y_adjusted})\bord1\blur0\fad(20,20)"
-            events.append(
-                f"Dialogue: 0,{sec_to_ass_time(w_start)},{sec_to_ass_time(w_end)},Overlay,,0,0,0,,{{{line_tags}}}{line_text}"
-            )
 
     # Post-processing: fill render pauses > 0.5s and resolve overlaps
     ts_pairs = []
@@ -712,14 +559,7 @@ def main(argv: Optional[List[str]] = None):
     if not entries:
         raise RuntimeError("Keine gültigen Zeilen gefunden.")
 
-    word_alignments = []
-    word_align_path = BASE_DIR / "output" / "word_align.json"
-    if word_align_path.exists():
-        word_alignments = json.loads(word_align_path.read_text(encoding="utf-8"))
-
-    ass_text = build_ass(
-        file_name, entries, width, height, duration, word_alignments=word_alignments
-    )
+    ass_text = build_ass(file_name, entries, width, height, duration)
     args.output.write_text(ass_text, encoding="utf-8")
     print(args.output)
 

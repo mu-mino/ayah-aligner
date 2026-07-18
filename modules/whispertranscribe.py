@@ -42,7 +42,6 @@ SEGMENT_END_TOLERANCE: float = 1.5  # Sekunden, die an segment.end addiert werde
 ASR_OPTIONS: dict = {
     "no_speech_threshold": 1.0,
     "initial_prompt": "بسم الله الرحمن الرحيم",
-    "word_timestamps": True,
 }
 VAD_OPTIONS: dict = {
     "vad_onset": 0.1,
@@ -400,7 +399,6 @@ def _transcribe_chunk_local(
             seg_audio,
             language=WHISPER_LANGUAGE,
             beam_size=5,
-            word_timestamps=True,
             vad_filter=False,
             condition_on_previous_text=False,
             no_speech_threshold=1.0,

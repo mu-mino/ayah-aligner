@@ -13,6 +13,8 @@ async def get_res(client, batch_id, id):
             f"/home/muhammed-emin-eser/desk/din/quran/qwen_final_jsonl/{id}.jsonl"
         )
         print(content)
+    elif batch.status == "failed":
+        print("fail")
 
 
 async def main():

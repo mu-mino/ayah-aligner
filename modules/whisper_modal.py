@@ -51,7 +51,6 @@ def transcribe_audio_chunk(
     beam_size: int = 5,
     no_speech_threshold: float = 1.0,
     initial_prompt: str = "بسم الله الرحمن الرحيم",
-    word_timestamps: bool = True,
 ) -> dict[str, Any]:
     import numpy as np
     import whisperx
@@ -66,7 +65,6 @@ def transcribe_audio_chunk(
         asr_options={
             "no_speech_threshold": no_speech_threshold,
             "initial_prompt": initial_prompt,
-            "word_timestamps": word_timestamps,
         },
     )
 
@@ -74,7 +72,6 @@ def transcribe_audio_chunk(
         audio,
         language=language,
         beam_size=beam_size,
-        word_timestamps=word_timestamps,
         vad_filter=False,
         condition_on_previous_text=False,
         no_speech_threshold=no_speech_threshold,
@@ -84,22 +81,10 @@ def transcribe_audio_chunk(
 
     segments = []
     for seg in fw_segments:
-        words = []
-        if seg.words:
-            for w in seg.words:
-                wtxt = w.word.strip()
-                if not wtxt:
-                    continue
-                words.append({
-                    "word": wtxt,
-                    "start": float(w.start),
-                    "end": float(w.end),
-                })
         segments.append({
             "start": float(seg.start),
             "end": float(seg.end),
             "text": seg.text.strip(),
-            "words": words,
         })
 
     return {"segments": segments}

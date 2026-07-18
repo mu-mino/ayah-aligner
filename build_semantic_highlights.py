@@ -115,6 +115,12 @@ def run_llama(verse, file_name, verse_idx):
     TASK:
     Analyze the sentence and determine for each target word its semantic category based STRICTLY on the definitions below. Use the context of the whole sentence.
 
+    IMPORTANT CONTEXT: These words will be color-coded in a video:
+    - RED (DESTRUCTIVE)  → warning, punishment, sin — Allah WARNS the reader
+    - BLUE (CONSTRUCTIVE) → good news, reward, virtue — Allah gives glad tidings
+    - GOLD (GOD)          → direct reference to Allah, His names, His attributes
+    Ask yourself: is Allah warning the reader here (RED), giving good news (BLUE), or referring to Himself (GOLD)?
+
     CATEGORIES (only these four strings are allowed):
     - "GOD"
     - "DESTRUCTIVE"
@@ -175,7 +181,7 @@ def run_llama(verse, file_name, verse_idx):
 
     try:
         request = {
-            "custom_id": f"{verse_idx}",
+            "custom_id": f"{file_name}_{verse_idx}",
             "method": "POST",
             "url": "/v1/chat/completions",
             "body": {
@@ -197,19 +203,7 @@ def run_llama(verse, file_name, verse_idx):
                         "content": user_content,
                     },
                 ],
-                "response_format": {
-                    "type": "json_schema",
-                    "json_schema": {
-                        "name": "verse_annotations",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string",
-                                "enum": ["GOD", "DESTRUCTIVE", "CONSTRUCTIVE", "NONE"]
-                            },
-                        },
-                    },
-                },
+                "response_format": {"type": "json_object"},
             },
         }
         with open(

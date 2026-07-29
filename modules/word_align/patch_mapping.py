@@ -1,12 +1,17 @@
 """Patches .mapping files with word-level timestamps from Modal Whisper.
 
+Produces:
+  - *_word.mapping:  original format (HH:MM:SS integer timestamps)
+  - *_word.data.json: companion JSON with per-word timestamps per ayah
+
 Usage:
     python3 -m modules.word_align.patch_mapping output/mapping/98_*.mapping --surah 98
+    python3 -m modules.word_align.patch_mapping --all
 """
 
 from __future__ import annotations
 
-import os
+import json
 import re
 import sys
 from pathlib import Path
@@ -78,23 +83,22 @@ def patch_mapping_file(
         ts = e["timestamp_sec"]
         h, m = divmod(int(ts), 3600)
         mi, s = divmod(int(m), 60)
-        s = s + (ts - int(ts))
 
-        word_info = ""
-        if ayah_key in words_by_ayah:
-            parts = []
-            for w in words_by_ayah[ayah_key]:
-                parts.append(
-                    f"{w['word_index']}:{w['text_imlaei']}:{w['start_s']:.2f}-{w['end_s']:.2f}"
-                )
-            word_info = " | " + ";".join(parts)
-
-        lines.append(
-            f"[{h:02d}:{mi:02d}:{s:06.3f}] :: {e['verse_id']}: {e['text']}{word_info}"
-        )
+        lines.append(f"[{h:02d}:{mi:02d}:{s:02d}] :: {e['verse_id']}: {e['text']}")
 
     out_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    print(f"  Written: {out_path}")
+
+    data_path = out_path.with_suffix(".word_data.json")
+    data_path.write_text(
+        json.dumps(
+            {str(k): v for k, v in words_by_ayah.items()},
+            ensure_ascii=False, indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    print(f"  Mapping: {out_path}")
+    print(f"  Words:   {data_path}")
     return out_path
 
 

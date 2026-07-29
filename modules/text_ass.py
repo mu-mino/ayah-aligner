@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import List, Tuple, Optional, Dict
 import numpy as np
 from llama_cpp import Llama
-from pyparsing import originalTextFor, nestedExpr, CharsNotIn
+
 
 BASE_DIR = Path(__file__).parent.parent
 
@@ -254,133 +254,134 @@ def get_annotated_text(file_name: str) -> Dict:
     return verses
 
 
-_llm_cache: Dict[str, str] = {}
+DIVINE_ATTRIBUTES = {
+    "beneficent", "merciful", "great", "high", "generous", "kind", "just",
+    "near", "forgiving", "wise", "knower", "hearer", "seer", "aware",
+    "provider", "strong", "knowing", "capable", "holy", "compassionate",
+    "majestic", "glorious", "living", "eternal", "subduer", "avenger",
+    "sustainer", "gracious", "faithful", "forbearing", "magnificent",
+    "appreciative", "preserver", "reckoner", "watchful", "responsive",
+    "embracing", "loving", "resurrector", "witness", "truth", "trustee",
+    "firm", "friend", "praiseworthy", "originator", "restorer",
+    "pardoner", "subtle", "beautiful", "powerful", "courteous", "ready",
+}
 
-def _llm_cached(prompt: str) -> str:
-    if prompt not in _llm_cache:
-        output = LLM(prompt=prompt, max_tokens=10, temperature=0.0, stop="\n\n")
-        _llm_cache[prompt] = output["choices"][0]["text"].strip()
-    return _llm_cache[prompt]
+KNOWN_DIVINE_COMPOUNDS = {
+    "all-mighty", "all-knowing", "all-hearer", "all-seer", "all-aware",
+    "all-wise", "all-provider", "all-strong", "all-capable", "all-just",
+    "all-forgiving", "all-merciful", "all-compassionate", "all-majestic",
+    "all-glorious", "all-subtle", "all-powerful",
+    "allmighty", "allknowing", "allhearer", "allseer", "allaware",
+    "allwise", "allprovider", "allstrong", "allcapable", "alljust",
+    "allforgiving", "allmerciful", "allcompassionate", "allmajestic",
+    "allglorious", "allsubtle", "allpowerful",
+    "oft-forgiving", "oftforgiving",
+}
 
 
-def annotate_highlights(verse, highlights: Dict):
-    # 1. Zitate direkt auf nativer String-Ebene in Kursiv wandeln
-    matches = re.sub(r'["\'](.*?)["\']', r"{\\i1}\1{\\i0}", verse)
+def annotate_highlights(verse, highlights):
+    tokens = verse.split()
+    n = len(tokens)
 
-    # 2. "O ..."-Prinzip (Direkte Ansprachen am Satzanfang)
-    def call_to_action_replacer(match):
-        o_part = match.group(1)  # z. B. "O "
-        full_text_after_o = match.group(2)  # z. B. "you Messenger, deliver the message"
-        prompt = f"""Analyze the following text for a vocative address ("O-<subject>" / "Oh ...").
-    Identify the true grammatical subject/entity being called upon or addressed after the particle "O".
+    # Step 1: normalize AI annotations to int keys
+    proc = {}
+    for k, v in highlights.items():
+        proc[int(k)] = v.upper() if isinstance(v, str) else v
 
-    Examples for your understanding:
-    - Input: "O you who believe, eat of the good things" -> Output: "you who believe"
-    - Input: "O Prophet, fight the disbelievers" -> Output: "Prophet"
-    - Input: "O you Messenger, deliver what has been revealed" -> Output: "you Messenger"
-    - Input": "O People of the Scripture, why do you disbelieve" -> Output: "People of the Scripture"
+    # Step 2: "Most" → attribute shift
+    for idx in sorted(proc.keys()):
+        word = normalize(tokens[idx]) if idx < n else ""
+        if word.lower() == "most" and proc[idx] == "GOD":
+            if idx + 1 < n:
+                next_word = normalize(tokens[idx + 1]).lower()
+                if next_word in DIVINE_ATTRIBUTES:
+                    del proc[idx]
+                    proc[idx + 1] = "GOD"
 
-    Task: Extract ONLY the full entity being addressed.
-    YOUR RESPONSE SHOULD BE ONLY THE ENTITY BEING ADDRESSED: ONLY ONLY ONLY: NOT ONE MORE WORD.
-    Your output should ONLY contain the name of the entity. DO NOT RETURN ANYTHING ELSE THAN THAT.
-    Output format: Respond with EXACTLY that extracted phrase/word. No punctuation, no quotes, no explanations.
+    # Step 3: add missing unambiguous words
+    for i, token in enumerate(tokens):
+        clean = normalize(token).lower()
+        normed = normalize(token)
+        if clean in {"allah", "allâh"} and i not in proc:
+            proc[i] = "GOD"
+        if clean == "lord" and normed and normed[0].isupper() and i not in proc:
+            proc[i] = "GOD"
+        raw_clean = token.strip(".,;:!?\"'()[]{}").lower()
+        if raw_clean in KNOWN_DIVINE_COMPOUNDS and i not in proc:
+            proc[i] = "GOD"
 
-    Text: {o_part}{full_text_after_o}
-    Addressed Entity:"""
+    # Step 3b: override misclassifications for unambiguous divine words
+    for i, token in enumerate(tokens):
+        clean = normalize(token).lower()
+        normed = normalize(token)
+        cat = proc.get(i)
+        if cat and cat != "GOD":
+            if clean in {"allah", "allâh"}:
+                proc[i] = "GOD"
+            if clean == "lord" and normed and normed[0].isupper():
+                proc[i] = "GOD"
 
-        text = _llm_cached(prompt)
+    # Step 3c: strip GOD from known false-positive categories
+    NEVER_GOD = {
+        "the", "of", "in", "from", "to", "for", "with", "by", "at", "on",
+        "and", "but", "or", "nor", "yet", "so", "if", "then", "than", "as",
+        "is", "are", "was", "were", "be", "been", "being",
+        "has", "have", "had", "do", "does", "did",
+        "will", "would", "shall", "should", "can", "could", "may", "might",
+        "this", "that", "these", "those",
+        "it", "its", "itself", "they", "them", "their", "theirs",
+        "who", "whom", "whose", "which", "what",
+        "only", "just", "even", "also", "too", "very", "still", "already",
+        "never", "always", "often", "sometimes",
+        "muhammad", "moses", "moosa", "ibrahim", "maryam",
+        "angel", "angels", "prophet", "prophets",
+        "quran", "book", "books", "ayat", "verses",
+        "heaven", "heavens", "earth", "sky", "throne",
+        "day", "hour", "resurrection",
+        "worship", "salat", "zakat",
+        "paradise", "hell", "fire", "torment", "recompense",
+        "etc", "ie", "v",
+    }
+    for i, token in enumerate(tokens):
+        clean = normalize(token).lower()
+        if clean in NEVER_GOD:
+            if i in proc:
+                del proc[i]
 
-        # Wir schneiden das Subjekt aus dem Text aus, der NACH dem "O" kommt
-        rest_of_text = full_text_after_o.replace(text, "", 1)
+    # Step 4: track parentheses depth
+    paren_depth = [0] * n
+    depth = 0
+    for i, token in enumerate(tokens):
+        depth += token.count("(")
+        paren_depth[i] = depth
+        depth -= token.count(")")
 
-        return (
-            (
-                rf"{{\b1\c&HFFFFFF&\fs55}}{o_part}{text.upper()}"
-                rf"{{\b0\c&HFFFFFF&\fs45}}{rest_of_text}"
-            )
-            if text.lower() in full_text_after_o.lower()
-            else (f"{o_part}{full_text_after_o}")
-        )
-
-    matches = re.sub(r"(\s*[oO]\s+)(.+)", call_to_action_replacer, verse)
-
-    # 3. Ausrufezeichen-Nachdruck (Macht den Satz bis zum ! fett)
-    matches = re.sub(r"CN_START([^.!?]*?!)", r"{\\b1}\1{\\b0}", verse)
-
-    # 4. Klammern dezent formatieren
-
-    detected_matches = []
-
-    def format_nested_parentheses_with_pyparsing(verse):
-        # 1. CharsNotIn (großes C) definiert Text außerhalb der Klammern
-        text_outside = CharsNotIn("()")
-
-        # 2. Findet alles zwischen ( und ), egal wie tief verschachtelt
-        parentheses_content = originalTextFor(nestedExpr("(", ")"))
-
-        # 3. Der gesamte Parser sucht entweder nach Text ODER nach einer Klammer
-        parser = (text_outside | parentheses_content)[...]
-
-        # 4. Den Vers parsen (gibt eine Liste von Textbausteinen zurück)
-        parsed_tokens = parser.parseString(verse).asList()
-
-        # 5. Die Bausteine wieder zusammensetzen und die Klammern dabei formatieren
-        result = []
-        for token in parsed_tokens:
-            if token.startswith("(") and token.endswith(")"):
-                # Es ist ein Klammerblock -> ASS-Formatierung anwenden
-                # token[1:-1] schneidet die äußeren Klammern ab
-                inner_content = token[1:-1]
-                result.append(
-                    rf"{{\fs30\c&HAAAAAA&}}({inner_content}){{\fs40\c&HFFFFFF&}}"
-                )
-            else:
-                # Es ist normaler Text außerhalb der Klammern
-                result.append(token)
-
-        return "".join(result)
-
-    matches = format_nested_parentheses_with_pyparsing(verse)
-
-    verse_tokens = matches.split()
-    for i, w in highlights.items():
-        cat = normalize(w).strip()
-        if cat in COLOR_MAP:
-            detected_matches.append(
-                {
-                    "index": i,
-                    "word": verse_tokens[i] if i < len(verse_tokens) else "",
-                    "category": cat,
-                    "color": COLOR_MAP[cat],
-                }
-            )
-        else:
-            cat = "NONE"
-            detected_matches.append(
-                {
-                    "index": i,
-                    "word": verse_tokens[i] if i < len(verse_tokens) else "",
-                    "category": cat,
-                    "color": COLOR_MAP[cat],
-                }
-            )
+    # Step 5: single-pass token formatting
     ass_lines = []
-    highlighted_ids = [el["index"] for el in detected_matches]
-    for i, token in enumerate(verse_tokens):
-        if i in highlighted_ids:
-            w = next((match for match in detected_matches if match["index"] == i), None)
-            if w is None:
-                w = token
-            elif r"\c&HAAAAAA&" in token:
-                colored = token.replace(r"\c&HAAAAAA&", rf"\c{w['color']}")
-                w = rf"{{\b1}}{colored}{{\b0}}" if w["category"] == "GOD" else colored
-            elif w["category"] == "GOD":
-                w = f"{{\\c{w['color']}}}{{\\b1}}{token}{{\\b0}}{{\\c}}"
+    for i, token in enumerate(tokens):
+        in_parens = paren_depth[i] > 0
+        hl = proc.get(i)
+
+        if hl:
+            color = COLOR_MAP.get(hl, COLOR_MAP["NONE"])
+            if hl == "GOD":
+                ass_lines.append(f"{{\\c{color}}}{{\\b1}}{token}{{\\b0}}{{\\c}}")
             else:
-                w = f"{{\\c{w['color']}}}{token}{{\\c}}"
+                ass_lines.append(f"{{\\c{color}}}{token}{{\\c}}")
+        elif in_parens:
+            is_first = i == 0 or paren_depth[i - 1] == 0
+            is_last = i + 1 >= n or paren_depth[i + 1] == 0
+            if is_first and not is_last:
+                ass_lines.append(f"{{\\fs30\\c&HAAAAAA&}}{token}")
+            elif is_last and not is_first:
+                ass_lines.append(f"{{\\c&HAAAAAA&}}{token}{{\\fs40\\c&HFFFFFF&}}")
+            elif is_first and is_last:
+                ass_lines.append(f"{{\\fs30\\c&HAAAAAA&}}{token}{{\\fs40\\c&HFFFFFF&}}")
+            else:
+                ass_lines.append(f"{{\\c&HAAAAAA&}}{token}")
         else:
-            w = token
-        ass_lines.append(w)
+            ass_lines.append(token)
+
     return " ".join(ass_lines)
 
 

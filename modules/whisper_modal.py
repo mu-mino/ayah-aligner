@@ -59,7 +59,7 @@ def transcribe_audio_chunk(
     model = whisperx.load_model(
         "large-v3",
         device="cuda",
-        compute_type="float16",
+        compute_type="int8",
         language=language,
         asr_options={
             "no_speech_threshold": no_speech_threshold,

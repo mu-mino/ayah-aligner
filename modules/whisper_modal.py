@@ -16,7 +16,9 @@ app = modal.App("whispe-ayah-aligner")
 _image = (
     modal.Image.debian_slim()
     .pip_install(
-        "whisperx",
+        "whisperx==3.8.6",
+        "faster-whisper==1.2.1",
+        "ctranslate2==4.7.2",
         "torch",
         "numpy",
         "whisper-timestamped",

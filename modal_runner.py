@@ -13,7 +13,8 @@ image = (
     Image.debian_slim()
     .apt_install("ffmpeg")
     .pip_install([
-        "numpy", "opencv-python-headless", "torch", "whisperx",
+        "numpy", "opencv-python-headless", "torch",
+        "whisperx==3.8.6", "faster-whisper==1.2.1", "ctranslate2==4.7.2",
         "sentence-transformers", "spacy", "regex", "camel-tools",
     ])
     .run_commands(

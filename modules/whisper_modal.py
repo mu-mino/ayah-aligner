@@ -50,7 +50,6 @@ def transcribe_audio_chunk(
     language: str = "ar",
     beam_size: int = 5,
     no_speech_threshold: float = 1.0,
-    initial_prompt: str = "بسم الله الرحمن الرحيم",
 ) -> dict[str, Any]:
     import numpy as np
     import whisperx
@@ -64,7 +63,6 @@ def transcribe_audio_chunk(
         language=language,
         asr_options={
             "no_speech_threshold": no_speech_threshold,
-            "initial_prompt": initial_prompt,
         },
     )
 
@@ -75,7 +73,6 @@ def transcribe_audio_chunk(
         vad_filter=False,
         condition_on_previous_text=False,
         no_speech_threshold=no_speech_threshold,
-        initial_prompt=initial_prompt,
         max_initial_timestamp=0.0,
     )
 

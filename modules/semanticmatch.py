@@ -450,6 +450,11 @@ def _fill_gaps(results: List[MatchResult], verse_text: str) -> None:
             prev.span.end = curr.span.start
             prev.span.text = verse_text[prev.span.start : prev.span.end]
 
+    last = by_start[-1]
+    if last.span.end < len(verse_text) and verse_text[last.span.end :].strip():
+        last.span.end = len(verse_text)
+        last.span.text = verse_text[last.span.start : last.span.end]
+
 
 # ---------------------------------------------------------------------------
 # Guard
@@ -690,23 +695,10 @@ def patch_circlelog(
         )
 
     sub_entries = []
-    first = session.results[0]
-    first_ts = seconds_to_timestamp(first.chunk.window.start_sec)
-    first_text = _format_span_with_verse_ids(session, first.span.start, first.span.end)
-    new_circle_line = f"[{first_ts}] :: {first_text}"
-
-    for result in session.results[1:]:
+    for result in session.results:
         ts = seconds_to_timestamp(result.chunk.window.start_sec)
         text = _format_span_with_verse_ids(session, result.span.start, result.span.end)
         sub_entries.append(f"[{ts}] :: {text}")
 
-    if len(session.results) <= 1 and not sub_entries:
-        return
-
-    patched = (
-        lines[:insert_after]
-        + [new_circle_line]
-        + sub_entries
-        + lines[insert_after + 1 :]
-    )
+    patched = lines[: insert_after + 1] + sub_entries + lines[insert_after + 1 :]
     mapping_path.write_text("\n".join(patched) + "\n", encoding="utf-8")

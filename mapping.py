@@ -14,10 +14,9 @@ Ablauf:
 """
 
 import argparse
-import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple
 import dill
 
 import cv2
@@ -33,16 +32,11 @@ from modules.circlelog import (
     seconds_to_timestamp,
     write_mapping,
 )
-from modules.whispertranscribe import (
-    transcribe_chunks,
-    load_model,
-    USE_MODAL,
-)
+from modules.whispertranscribe import transcribe_chunks, load_model
 from modules.semanticmatch import (
     run_matching,
     patch_circlelog,
-    extract_verse_text,
-    extract_verse_number,
+    mapping_to_per_verse,
 )
 
 BASE_DIR = Path(__file__).parent
@@ -96,13 +90,15 @@ class WindowGroup:
     mapping_line: str = ""
     mapping_ts: str = ""
 
+    @property
+    def all_windows(self) -> List[FrameWindow]:
+        """Gibt das Hauptfenster und alle Sub-Fenster als eine gemeinsame Liste zurück."""
+        return [self.circle_window] + self.sub_windows
+
 
 # ---------------------------------------------------------------------------
 # Hilfsfunktion
 # ---------------------------------------------------------------------------
-
-
-
 
 
 def _load_gray(video_path: Path, window: FrameWindow):
@@ -239,11 +235,7 @@ def run(
             continue
         else:
             # Fall 2 + normaler Shift-Flow
-            ts = (
-                seconds_to_timestamp(groups[idx].circle_window.end_sec)
-                if idx == 0
-                else seconds_to_timestamp(groups[idx].circle_window.start_sec)
-            )
+            ts = seconds_to_timestamp(groups[idx].circle_window.start_sec)
             group.mapping_ts = ts
             line = build_verse_line(ts, group.verses)
             group.mapping_line = line
@@ -256,34 +248,27 @@ def run(
     groups_with_subs = [g for g in groups if g.sub_windows]
     if not groups_with_subs:
         return
-
-    whisper_model = None
-    if not USE_MODAL:
-        whisper_model = load_model(device=whisper_device)
+    whisper_model = load_model(device=whisper_device)
 
     for idx, group in enumerate(groups):
-        if not group.sub_windows:
-            continue
-        if idx + 1 >= len(groups):
+        id_verse: dict[int, str] = mapping_to_per_verse(group.mapping_line)
+        if not id_verse:
             continue
 
-        next_group = groups[idx + 1]
-        next_verse_text = extract_verse_text(next_group.mapping_line)
-        next_verse_num = extract_verse_number(next_group.mapping_line)
-        if not next_verse_text or next_verse_num is None:
-            continue
+        all_windows = group.all_windows if group.sub_windows else [group.circle_window]
+        if idx + 1 == len(groups) - 1 and not groups[idx + 1].verses:
+            all_windows = all_windows + [groups[idx + 1].circle_window]
 
         chunks = transcribe_chunks(
             video_path=audio_path,
-            windows=group.sub_windows,
+            windows=all_windows,
             model=whisper_model,
         )
 
         session = run_matching(
             chunks=chunks,
-            verse_text=next_verse_text,
             surah=surah,
-            ayah=next_verse_num,
+            dict_of_verses=id_verse,
         )
 
         if session.results:
@@ -293,32 +278,6 @@ def run(
                 affected_timestamp=affected_timestamp,
                 session=session,
             )
-
-            last_span_end = session.results[-1].span.end
-            continuation = session.verse_text[last_span_end:].strip()
-            first_sub_ts = seconds_to_timestamp(
-                session.results[0].chunk.window.start_sec
-            )
-            first_verse_num = next_group.verses[0][0]
-            file_lines = mapping_path.read_text(encoding="utf-8").splitlines()
-            verse_num_prepended = False
-            cleaned: list = []
-            for file_line in file_lines:
-                if file_line.startswith(f"[{next_group.mapping_ts}]"):
-                    if continuation:
-                        cleaned.append(f"[{next_group.mapping_ts}] :: {continuation}")
-                    continue
-                if not verse_num_prepended and file_line.startswith(
-                    f"[{first_sub_ts}]"
-                ):
-                    file_line = file_line.replace(
-                        f"[{first_sub_ts}] :: ",
-                        f"[{first_sub_ts}] :: {first_verse_num}: ",
-                        1,
-                    )
-                    verse_num_prepended = True
-                cleaned.append(file_line)
-            mapping_path.write_text("\n".join(cleaned) + "\n", encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------

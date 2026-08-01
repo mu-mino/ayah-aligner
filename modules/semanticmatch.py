@@ -77,7 +77,7 @@ def _rouge_l(reference: str, candidate: str) -> float:
 # Arabische Normalisierung
 # ---------------------------------------------------------------------------
 
-_AR_DIACRITICS = regex.compile(r"[\p{M}\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED\u06DF-\u06E8\u06EA-\u06FF]+")
+_AR_DIACRITICS = regex.compile(r"[\p{M}\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED]+")
 _AR_TATWEEL = "\u0640"
 _AR_NON_ARABIC = regex.compile(r"[^\p{Arabic} ]+")
 _AR_MULTI_SPACE = regex.compile(r"\s+")
@@ -86,8 +86,6 @@ _AR_CHAR_MAP = str.maketrans(
     {
         "آ": "ا",
         "ٱ": "ا",
-        "أ": "ا",
-        "إ": "ا",
         "ى": "ي",
         "ئ": "ي",
         "ؤ": "و",
@@ -97,10 +95,6 @@ _AR_CHAR_MAP = str.maketrans(
         "ڤ": "ف",
         "پ": "ب",
         "چ": "ج",
-        "ٓ": "",  # Hamza-oben (Madda-Zeichen)
-        "ۭ": "",  # Small High Sign
-        "ۙ": "",  # Pause-Zeichen
-        "ـ": "",  # Tatweel (falls nicht via separate Zeile entfernt)
     }
 )
 
@@ -179,8 +173,8 @@ class GuardReport:
 class MatchSession:
     """Gesamtergebnis einer Matching-Sitzung für einen Vers."""
 
-    verse_text: str
-    ayah: int = 0
+    mapping_text: str
+    verse_ranges: List[Tuple[int, int, int, str]] = field(default_factory=list)
     results: List[MatchResult] = field(default_factory=list)
     guard: Optional[GuardReport] = None
 
@@ -190,23 +184,24 @@ class MatchSession:
 # ---------------------------------------------------------------------------
 
 
-def extract_verse_text(mapping_line: str) -> str:
-    """
-    Extrahiert den Vers-Text aus einem mapping_line-Eintrag.
-    Entfernt NUR die erste Versnummer, damit '32:'/'33:' als Text erhalten bleiben.
-    """
-    m = re.match(r"^\[\d{2}:\d{2}:\d{2}\]\s*::\s*(.*)$", mapping_line.strip())
-    if not m:
-        return ""
-    content = m.group(1)
-    text = re.sub(r"^\d+:\s*", "", content, count=1)
-    return text.strip()
+def mapping_to_per_verse(mapping_line: str) -> Optional[dict]:
+    mapping_stamp = re.match(
+        r"^\[\d{2}:\d{2}:\d{2}\]\s*::\s*(.*)$", mapping_line.strip()
+    )
+    if not mapping_stamp:
+        return {}
 
-
-def extract_verse_number(mapping_line: str) -> Optional[int]:
-    """Extrahiert die erste Vers-Nummer aus einem mapping_line-Eintrag."""
-    m = re.match(r"^\[\d{2}:\d{2}:\d{2}\]\s*::\s*(\d+):", mapping_line.strip())
-    return int(m.group(1)) if m else None
+    content = mapping_stamp.group(1)
+    verse_markers = list(re.finditer(r"(?:^|\s)(\d+):\s*", content))
+    res = {}
+    for index, marker in enumerate(verse_markers):
+        next_marker = (
+            verse_markers[index + 1] if index + 1 < len(verse_markers) else None
+        )
+        start = marker.end()
+        end = next_marker.start() if next_marker else len(content)
+        res[int(marker.group(1))] = content[start:end].strip()
+    return res
 
 
 # ---------------------------------------------------------------------------
@@ -245,97 +240,15 @@ def _fetch_verse_words(surah: int, ayah: int) -> list:
     return words
 
 
-_CAMEL_DB = None
-_CAMEL_ANALYZER = None
-
-
-def _get_stems(word: str) -> set:
-    global _CAMEL_DB, _CAMEL_ANALYZER
-    if _CAMEL_ANALYZER is None:
-        from camel_tools.morphology.analyzer import Analyzer
-        from camel_tools.morphology.database import MorphologyDB
-
-        db_path = "/home/muhammed-emin-eser/.camel_tools/data/morphology_db/calima-msa-r13/morphology.db"
-        _CAMEL_DB = MorphologyDB(db_path)
-        _CAMEL_ANALYZER = Analyzer(_CAMEL_DB)
-
-    analyses = _CAMEL_ANALYZER.analyze(word)
-    stems = set()
-    for a in analyses:
-        stem = a.get("stem", "")
-        if stem:
-            stems.add(stem)
-    if not stems:
-        stems.add(word)
-    return stems
-
-
-def _word_to_translation_from(arabic_word: str, verse_words: list, min_idx: int = 0) -> Tuple[str, int]:
-    chunk_stems = _get_stems(arabic_word)
-    norm_word = _normalize_arabic(arabic_word)
-
-    for idx in range(min_idx, len(verse_words)):
-        w = verse_words[idx]
-        verse_stems = _get_stems(w["text_uthmani"])
-        if chunk_stems & verse_stems:
-            norm_verse = _normalize_arabic(w["text_uthmani"])
-            shorter = min(len(norm_word), len(norm_verse))
-            if shorter > 0:
-                match_len = SequenceMatcher(None, norm_word, norm_verse).find_longest_match(
-                    0, len(norm_word), 0, len(norm_verse)
-                ).size
-                if match_len / shorter < 0.7:
-                    continue
-            t = w.get("translation", "")
-            text = t if isinstance(t, str) else ""
-            if re.match(r"^\(\d+\)$", text.strip()):
-                return ("", -1)
-            return (text.strip(), idx)
-
-    norm_word = _normalize_arabic(arabic_word)
-    best_score = 0.0
-    best_idx = -1
-    best_match = None
-
-    for idx in range(min_idx, len(verse_words)):
-        w = verse_words[idx]
-        norm_verse = _normalize_arabic(w["text_uthmani"])
-        shorter = min(len(norm_word), len(norm_verse))
-        if shorter > 0:
-            sm = SequenceMatcher(None, norm_word, norm_verse)
-            match_len = sm.find_longest_match(0, len(norm_word), 0, len(norm_verse)).size
-            if match_len / shorter < 0.7:
-                continue
-            score = sm.ratio()
-        else:
-            score = 0.0
-        if score > best_score:
-            best_score = score
-            best_idx = idx
-            best_match = w
-
-    if best_score < WORD_MATCH_TOLERANCE or best_match is None:
-        return ("", -1)
-
-    t = best_match.get("translation", "")
-    text = t if isinstance(t, str) else ""
-    if re.match(r"^\(\d+\)$", text.strip()):
-        return ("", -1)
-    return (text.strip(), best_idx)
-
-
-def _word_to_translation(arabic_word: str, verse_words: list) -> Tuple[str, int]:
-    chunk_stems = _get_stems(arabic_word)
-
-    for idx, w in enumerate(verse_words):
-        verse_stems = _get_stems(w["text_uthmani"])
-        if chunk_stems & verse_stems:
-            t = w.get("translation", "")
-            text = t if isinstance(t, str) else ""
-            if re.match(r"^\(\d+\)$", text.strip()):
-                return ("", -1)
-            return (text.strip(), idx)
-
+def _word_to_translation(
+    arabic_word: str, verse_words: list
+) -> Tuple[str, int]:
+    """
+    Findet das beste Match für ein arabisches Wort in der Vers-Wortliste und
+    gibt (englische Übersetzung, Index in verse_words) zurück.
+    Bei unzureichendem Match (Score < WORD_MATCH_TOLERANCE) wird ("", -1) zurückgegeben;
+    _fill_gaps deckt die Lücke später ab.
+    """
     norm_word = _normalize_arabic(arabic_word)
     best_score = 0.0
     best_idx = -1
@@ -352,11 +265,46 @@ def _word_to_translation(arabic_word: str, verse_words: list) -> Tuple[str, int]
     if best_score < WORD_MATCH_TOLERANCE or best_match is None:
         return ("", -1)
 
-    t = best_match.get("translation", "")
-    text = t if isinstance(t, str) else ""
-    if re.match(r"^\(\d+\)$", text.strip()):
-        return ("", -1)
+    t = best_match.get("translation", {})
+    text = t.get("text", "") if isinstance(t, dict) else ""
     return (text.strip(), best_idx)
+
+
+def _fix_monotonic_indices(
+    matched: List[Tuple[str, int]], verse_words: list
+) -> List[Tuple[str, int]]:
+    """
+    Korrigiert die gematchten Indices pro Chunk auf einen monoton steigenden
+    Durchlauf: jeder Index >= dem vorherigen.
+    Ausreisser (zurückfallende Indices durch wiederholte Wörter) werden durch
+    den nächsthöheren Index aus der Lookup-Tabelle ersetzt.
+    """
+    from collections import defaultdict
+
+    lookup: dict[str, list[int]] = defaultdict(list)
+    for idx, vw in enumerate(verse_words):
+        lookup[_normalize_arabic(vw["text_uthmani"])].append(idx)
+
+    corrected = []
+    last_valid = -1
+    for word, orig_idx in matched:
+        if orig_idx >= last_valid:
+            corrected.append((word, orig_idx))
+            last_valid = orig_idx
+        else:
+            candidates = [
+                i
+                for i in lookup.get(_normalize_arabic(word), [])
+                if i > last_valid
+            ]
+            if candidates:
+                new_idx = min(candidates)
+                corrected.append((word, new_idx))
+                last_valid = new_idx
+            else:
+                corrected.append((word, orig_idx))
+                last_valid = max(last_valid, orig_idx)
+    return corrected
 
 
 nlp = spacy.blank("en")
@@ -609,35 +557,65 @@ def run_guard(results: List[MatchResult], verse_text: str) -> GuardReport:
 
 def run_matching(
     chunks: List[ChunkTranscription],
-    verse_text: str,
+    dict_of_verses: dict,
     surah: int,
-    ayah: int,
 ) -> MatchSession:
     """
     Matcht jeden arabischen Chunk gegen den englischen Vers-Text via quran.com API.
+
+    Ablauf pro Chunk:
+        1. quran.com liefert wortgenaues Alignment für surah:ayah
+        2. Arabischen Chunk gegen Vers-Wörter matchen → Positionen [i, j]
+        3. Wort-Übersetzungen [i..j] konkatenieren → Query
+        4. SequenceMatcher findet besten Substring-Match in verse_text
     """
-    session = MatchSession(verse_text=verse_text, ayah=ayah)
+    mapping_parts = []
+    verse_ranges: List[Tuple[int, int, int, str]] = []
+    cursor = 0
+    for ayah, verse_text in dict_of_verses.items():
+        if mapping_parts:
+            cursor += 1
+        start = cursor
+        mapping_parts.append(verse_text)
+        end = start + len(verse_text)
+        verse_ranges.append((ayah, start, end, verse_text))
+        cursor = end
+
+    session = MatchSession(
+        mapping_text=" ".join(mapping_parts),
+        verse_ranges=verse_ranges,
+    )
 
     if not chunks:
         session.guard = GuardReport(completeness_passed=True)
         return session
 
-    verse_words = _fetch_verse_words(surah, ayah)
+    verse_words = []
+    for ayah in dict_of_verses:
+        verse_words.extend(_fetch_verse_words(surah, ayah))
 
     for chunk in chunks:
+        translations = []
         text = chunk.raw_text.split()
-        matched_pairs: List[Tuple[str, str, int]] = []
+        matched_pairs: List[Tuple[str, int]] = []
         for txt in text:
             translation, idx = _word_to_translation(txt, verse_words)
+            matched_pairs.append((txt, idx))
             if translation:
-                matched_pairs.append((txt, translation, idx))
+                translations.append(translation)
 
-        translations = [t for _, t, _ in matched_pairs]
+        matched_pairs = _fix_monotonic_indices(matched_pairs, verse_words)
+        translations = []
+        for _, idx in matched_pairs:
+            if idx >= 0:
+                t = verse_words[idx].get("translation", {})
+                text_val = t.get("text", "") if isinstance(t, dict) else ""
+                translations.append(text_val.strip())
+
         query = " ".join(translations)
         char_start, char_end, span_text, score = find_semantic_span(
-            query, session.verse_text
+            query, session.mapping_text
         )
-
         session.results.append(
             MatchResult(
                 chunk=chunk,
@@ -647,14 +625,29 @@ def run_matching(
             )
         )
 
-    _fill_gaps(session.results, session.verse_text)
-    session.guard = run_guard(session.results, session.verse_text)
+    _fill_gaps(session.results, session.mapping_text)
+    session.guard = run_guard(session.results, session.mapping_text)
     return session
 
 
 # ---------------------------------------------------------------------------
 # Circlelog patchen
 # ---------------------------------------------------------------------------
+
+
+def _format_span_with_verse_ids(session: MatchSession, start: int, end: int) -> str:
+    parts = []
+    for ayah, verse_start, verse_end, verse_text in session.verse_ranges:
+        overlap_start = max(start, verse_start)
+        overlap_end = min(end, verse_end)
+        if overlap_start >= overlap_end:
+            continue
+
+        text = verse_text[overlap_start - verse_start : overlap_end - verse_start]
+        if overlap_start == verse_start:
+            text = f"{ayah}: {text}"
+        parts.append(text.strip())
+    return " ".join(part for part in parts if part)
 
 
 def patch_circlelog(
@@ -664,6 +657,19 @@ def patch_circlelog(
 ) -> None:
     """
     Fügt Sub-Einträge in die Circlelog-Datei ein.
+
+    Für jeden MatchResult aus der MatchSession wird ein Sub-Eintrag erzeugt:
+        [HH:MM:SS] :: <gematchter Span-Text>
+
+    Der Timestamp stammt aus dem FrameWindow des zugehörigen Chunks
+    (window.start_sec). Die Sub-Einträge werden direkt nach dem betroffenen
+    Circlelog-Eintrag eingefügt, vor dem nächsten Eintrag.
+
+    Parameters
+    ----------
+    mapping_path       : Pfad zur Circlelog-Mapping-Datei.
+    affected_timestamp : Timestamp des betroffenen Eintrags, z. B. "00:00:10".
+    session            : MatchSession mit den Ergebnissen aus run_matching().
     """
     from modules.circlelog import seconds_to_timestamp
 
@@ -684,14 +690,23 @@ def patch_circlelog(
         )
 
     sub_entries = []
-    seen = set()
-    for result in session.results:
+    first = session.results[0]
+    first_ts = seconds_to_timestamp(first.chunk.window.start_sec)
+    first_text = _format_span_with_verse_ids(session, first.span.start, first.span.end)
+    new_circle_line = f"[{first_ts}] :: {first_text}"
+
+    for result in session.results[1:]:
         ts = seconds_to_timestamp(result.chunk.window.start_sec)
-        text = f"{result.span.text}"
-        if text in seen:
-            continue
-        seen.add(text)
+        text = _format_span_with_verse_ids(session, result.span.start, result.span.end)
         sub_entries.append(f"[{ts}] :: {text}")
 
-    patched = lines[: insert_after + 1] + sub_entries + lines[insert_after + 1 :]
+    if len(session.results) <= 1 and not sub_entries:
+        return
+
+    patched = (
+        lines[:insert_after]
+        + [new_circle_line]
+        + sub_entries
+        + lines[insert_after + 1 :]
+    )
     mapping_path.write_text("\n".join(patched) + "\n", encoding="utf-8")

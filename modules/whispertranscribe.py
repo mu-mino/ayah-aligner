@@ -38,10 +38,10 @@ SEGMENT_END_TOLERANCE: float = 1.5  # Sekunden, die an segment.end addiert werde
 
 # Quranic recitation (tajweed/melody) is often misclassified as non-speech.
 # Disable no_speech filtering and lower VAD onset/offset to capture all audio.
-# initial_prompt primes Whisper toward Arabic Quranic vocabulary.
+# initial_prompt entfernt: verursacht Halluzinationen (z.B. "ترجمة نانسي قنقر")
+# bei VAD-gemergten Segmenten.
 ASR_OPTIONS: dict = {
     "no_speech_threshold": 1.0,
-    "initial_prompt": "بسم الله الرحمن الرحيم",
 }
 VAD_OPTIONS: dict = {
     "vad_onset": 0.1,
@@ -402,7 +402,6 @@ def _transcribe_chunk_local(
             vad_filter=False,
             condition_on_previous_text=False,
             no_speech_threshold=1.0,
-            initial_prompt="بسم الله الرحمن الرحيم",
             max_initial_timestamp=0.0,
         )
         for seg in fw_segments:

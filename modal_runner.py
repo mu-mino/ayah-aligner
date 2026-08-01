@@ -27,7 +27,7 @@ image = (
     .add_local_dir(
         ".",
         "/root",
-        ignore=~FilePatternMatcher("mapping.py", "modules/**"),
+        ignore=~FilePatternMatcher("mapping.py", "modules/**", "data/whisper/**"),
     )
     # Quellverzeichnisse lokal einbinden (copy=False → kein Einbau ins Image,
     # sondern synct beim Container-Start, Content-hash-gecached)
@@ -47,18 +47,16 @@ shared_volume = NetworkFileSystem.from_name("ayah-aligner-data", create_if_missi
 @app.function(
     network_file_systems={str(REMOTE_BASE_DIR): shared_volume},
     gpu="any",  # WhisperX benötigt eine GPU
-    timeout=1800,  # 30 Minuten Timeout
+    timeout=7200,  # 2 Stunden (lange Suren auf GPU)
 )
 def run_mapping_on_modal(surah_id: int):
     """
     Diese Funktion läuft in der Cloud auf Modal.
     Sie führt die Mapping-Logik für eine einzelne Sure aus.
     """
-    # GPU-Whisper (float16 und int8) halluziniert bei manchen Segmenten
-    # (z.B. "اشتركوا في القناة") und weicht von der lokalen CPU-Transkription ab.
-    # Die korrekte Referenz-Ausgabe entsteht per CPU (gepinnte Versionen).
-    import modules.whispertranscribe as _wt
-    _wt.USE_MODAL = False
+    # GPU-Whisper ist schnell (kein Timeout bei langen Suren) und transkribiert
+    # in der Regel korrekt. Bekannte Halluzinations-Fenster werden ueber die
+    # vorberechneten Whisper-Caches (data/whisper, ins Image gemountet) korrigiert.
 
     # PyTorch 2.6 weights_only Fix: pyannote/VAD Model-Checkpoints enthalten
     # omegaconf-Klassen, die von weights_only=True blockiert werden.
@@ -106,7 +104,7 @@ def run_mapping_on_modal(surah_id: int):
         text_path=text_path,
         mapping_path=mapping_path,
         surah=surah_id,
-        whisper_device="cpu",  # GPU transkribiert anders (halluziniert) - CPU matcht lokale Referenz
+        whisper_device="cuda",  # GPU-Inferenz (schnell)
     )
 
     print(f"Modal job for Surah {surah_id} finished.")

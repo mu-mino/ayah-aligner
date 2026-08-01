@@ -54,6 +54,12 @@ def run_mapping_on_modal(surah_id: int):
     Diese Funktion läuft in der Cloud auf Modal.
     Sie führt die Mapping-Logik für eine einzelne Sure aus.
     """
+    # GPU-Whisper (float16 und int8) halluziniert bei manchen Segmenten
+    # (z.B. "اشتركوا في القناة") und weicht von der lokalen CPU-Transkription ab.
+    # Die korrekte Referenz-Ausgabe entsteht per CPU (gepinnte Versionen).
+    import modules.whispertranscribe as _wt
+    _wt.USE_MODAL = False
+
     # PyTorch 2.6 weights_only Fix: pyannote/VAD Model-Checkpoints enthalten
     # omegaconf-Klassen, die von weights_only=True blockiert werden.
     import torch
@@ -100,7 +106,7 @@ def run_mapping_on_modal(surah_id: int):
         text_path=text_path,
         mapping_path=mapping_path,
         surah=surah_id,
-        whisper_device="cuda",  # In Modal haben wir eine GPU
+        whisper_device="cpu",  # GPU transkribiert anders (halluziniert) - CPU matcht lokale Referenz
     )
 
     print(f"Modal job for Surah {surah_id} finished.")

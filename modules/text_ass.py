@@ -319,7 +319,7 @@ _THEME_STEMS = {
         "remorse", "scorch", "blaze", "burn", "venge", "retribution", "penalty",
         "seiz", "dreadful", "awful", "terrible", "miserab", "wretch", "insolent",
         "ingrate", "ungrateful", "belied", "belying", "reject",
-        "evil", "nay", "deny", "denial", "woe", "falsehood", "vain", "kill",
+        "evil", "nay", "den(?:y|ies|ied|ying|ial)", "woe", "falsehood", "vain", "kill",
         "injustice", "alas", "munkar", "shame", "hostil", "insult", "haram",
         "adultery", "steal", "stole", "stolen", "sedition", "defame",
     ],

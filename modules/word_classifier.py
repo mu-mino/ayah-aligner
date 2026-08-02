@@ -193,10 +193,14 @@ NEVER_GOD = {
     # Ritus-/Quellen-Begriffe
     "umrah", "hikmah", "fitrah", "bismillah", "salat", "zakat", "sunnah",
     "halal", "haram", "fiqh", "tauheed", "jihad",
-    # Pronomen: kontextabhaengig (koennen den Propheten meinen, z.B.
-    # "Peace be upon him"). NIE als Gottheit markieren.
-    "he", "we", "him", "his", "our", "you", "my", "us", "me", "your", "i",
-    "himself", "ourselves", "ours", "yours",
+    # Schoepfungs-/neutrale Verben (keine Gottheit, auch wenn von Allah gesagt)
+    "fashioned", "fashions", "shaped", "shapes", "formed", "forms", "moulded",
+}
+
+PRONOUNS = {
+    "he", "we", "him", "his", "her", "hers", "our", "ours", "you", "your",
+    "yours", "my", "us", "me", "i", "himself", "herself", "ourselves",
+    "yourselves", "themselves",
 }
 
 
@@ -291,8 +295,14 @@ class WordClassifier:
             return special != category  # definitiv andere Kategorie
 
         # UNHANDLED: kategorie-spezifische Ausschlüsse
-        if category == "GOD" and clean in NEVER_GOD:
-            return True
+        if category == "GOD":
+            if clean in NEVER_GOD:
+                return True
+            # Pronomen sind nur als Gottheit glaubwuerdig, wenn sie GROSS
+            # geschrieben sind (Mitte-Satz-Kapitalisierung = Allah-Referenz).
+            # Klein geschriebene Pronomen (z.B. "Peace be upon him") sind NICHT GOD.
+            if clean in PRONOUNS and not (token and token[0].isupper()):
+                return True
         return clean in NEUTRAL_CONTENT_EXCLUSIONS.get(category, ())
 
     # ------------------------------------------------------------------

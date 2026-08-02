@@ -115,6 +115,88 @@ EXTRA_PATTERNS: Dict[str, List[str]] = {
 
 
 # ---------------------------------------------------------------------------
+# Kontext-unabhängig nie Kategorie-Wörter.
+# jsonl/KI-Entscheidungen bleiben primär; NUR diese Fehler werden entfernt.
+# ---------------------------------------------------------------------------
+
+FUNCTION_WORDS = {
+    # Artikel / Präpositionen / Konjunktionen
+    "the", "a", "an", "in", "on", "at", "to", "for", "with", "by", "from", "of",
+    "off", "over", "under", "between", "among", "through", "during", "before",
+    "after", "against", "about", "into", "onto", "within", "without", "and",
+    "or", "but", "nor", "yet", "so", "if", "then", "than", "as", "when", "while",
+    "because", "although", "though", "since", "unless", "until", "per", "versus",
+    # Hilfsverben / Kopula
+    "is", "are", "was", "were", "be", "been", "being", "am", "do", "does", "did",
+    "has", "have", "had", "will", "would", "shall", "should", "can", "could",
+    "may", "might", "must", "cannot", "dont", "doest", "didnt", "wont", "isnt",
+    "arent", "wasnt", "werent", "havent", "hasnt", "hadnt",
+    # Adverbien / Quantoren / Füllwörter
+    "not", "no", "never", "always", "often", "sometimes", "only", "just", "even",
+    "also", "too", "very", "still", "already", "again", "here", "there", "then",
+    "now", "most", "all", "some", "many", "much", "few", "more", "less", "both",
+    "each", "every", "any", "either", "neither", "etc", "ie", "v", "p", "e", "al",
+    "wa", "ya", "lo", "o", "ah", "h", "ist", "la", "st", "per", "versus", "vs",
+    # neutrale Pronomen / Demonstrative (nicht die göttl. "He/We"-Pronomen!)
+    "it", "its", "they", "them", "their", "theirs", "these", "those", "this",
+    "that", "who", "whom", "whose", "which", "what", "whatever", "whoever",
+    "whosoever", "itself", "themselves", "oneself",
+}
+
+# Klare, kontext-unabhängig neutrale Wörter (vom KI-Audit als Fehler bestätigt)
+NEUTRAL_CONTENT_EXCLUSIONS = {
+    "GOD": {"proportioned", "way"},
+    "DESTRUCTIVE": {
+        "backbone", "ground", "distance", "record", "examined", "begins", "repeats",
+        "hoard", "taken", "acknowledge", "behold", "criticism", "capture", "oaths",
+        "gone", "left", "rain", "people", "iron", "stone", "stones", "life",
+        "made", "etc", "will", "sends", "the", "them", "those", "they", "in",
+        "of", "are", "it", "its", "cannot", "with", "off", "against", "not",
+        "before", "into", "this", "about", "from", "you", "our", "his", "him",
+        "my", "do", "as", "most", "and", "was", "were", "there", "or", "whom",
+        "whosoever", "has", "to", "for", "a", "be", "shall", "their", "already",
+        "no", "ie", "al",
+    },
+    "CONSTRUCTIVE": {
+        "brightness", "accepting", "lasting", "debt", "supporters", "friends",
+        "protectors", "hunger", "pity", "the", "those", "in", "has", "him", "will",
+        "his", "be", "all", "and", "is", "me", "of", "who", "shall", "to", "do",
+        "we", "that", "their", "by", "have", "much", "you", "does", "they",
+        "theirs", "it", "every", "whom", "more", "from", "al", "before", "which",
+        "with", "only", "if", "there", "most",
+    },
+}
+
+
+NEVER_GOD = {
+    # Propheten / Personen (keine Gottheit)
+    "muhammad", "muhammads", "muhammed", "jesus", "isa", "salih", "ibrahim",
+    "abraham", "moses", "moosa", "maryam", "mary", "aaron", "harun", "david",
+    "dawud", "solomon", "sulaiman", "adam", "noah", "nuh", "john", "yahya",
+    "joseph", "yusuf", "jacob", "yaqub", "elisha", "elyas", "isaac", "ishaq",
+    "idris", "enoch", "ezra", "lot", "lut", "jethro", "shuaib", "zachariah",
+    "zakariya", "job", "ayyub",
+    # Religion / Quellen (keine Gottheit)
+    "islamic", "islam", "monotheism", "monotheist", "monotheists", "muslim",
+    "muslims", "religion", "religions", "religious", "christian", "christians",
+    "christianity", "jewish", "jews", "judaism", "quran", "qurans", "book",
+    "books", "taurah", "torah", "gospel",
+    # falsche Gottheiten (Plural / Götzendienst)
+    "gods", "lords", "deities", "partnergods", "idols", "idolsworship", "idol",
+    "idolaters", "lordship",
+    # neutrale Verben/Substantive des Schaffens
+    "created", "creates", "creation", "creations", "creators", "makers", "maker",
+    "inventing", "invented", "invents", "inventor",
+    # Adjektive (keine Gottheit)
+    "sacred", "grand", "tremendous", "enormous", "greatest", "wonderful",
+    "wondrous", "tremendously", "courteous", "great", "greater", "greatness",
+    # Ritus-/Quellen-Begriffe
+    "umrah", "hikmah", "fitrah", "bismillah", "salat", "zakat", "sunnah",
+    "halal", "haram", "fiqh", "tauheed", "jihad",
+}
+
+
+# ---------------------------------------------------------------------------
 # WordClassifier: if-else-Kaskade (jeder Fall einzeln) + Regex + Zusatzwörter
 # ---------------------------------------------------------------------------
 
@@ -143,35 +225,6 @@ class WordClassifier:
     # If-else-Kaskade: jeder einzelne Fall, basierend auf Korpus-Kontexten
     # ------------------------------------------------------------------
     def _special_case(self, clean: str):
-        # --- GOD: Embedding riecht "göttlich", ist aber KEINE Gottheit ---
-        if clean in {
-            # Propheten / Personen
-            "muhammad", "muhammads", "muhammed", "muhammad's", "jesus", "isa",
-            "salih", "ibrahim", "abraham", "moses", "moosa", "maryam", "mary",
-            "aaron", "harun", "david", "dawud", "solomon", "sulaiman", "adam",
-            "noah", "nuh", "john", "yahya", "joseph", "yusuf", "jacob", "yaqub",
-            "elisha", "elyas", "isaac", "ishaq", "idris", "enoch", "ezra",
-            "lot", "lut", "jethro", "shuaib", "zachariah", "zakariya", "job", "ayyub",
-            # Religion / Quellen (keine Gottheit)
-            "islamic", "islam", "monotheism", "monotheist", "monotheists",
-            "muslim", "muslims", "religion", "religions", "religious",
-            "christian", "christians", "christianity", "jewish", "jews", "judaism",
-            "quran", "qurans", "book", "books", "taurah", "torah", "gospel",
-            # falsche Gottheiten (Plural / Götzendienst)
-            "gods", "lords", "deities", "partnergods", "idols", "idolsworship",
-            "idol", "idolaters", "lordship",
-            # neutrale Verben/Substantive des Schaffens
-            "created", "creates", "creation", "creations", "creators", "makers",
-            "maker", "inventing", "invented", "invents", "inventor",
-            # Adjektive (keine Gottheit)
-            "sacred", "grand", "tremendous", "enormous", "greatest", "wonderful",
-            "wondrous", "tremendously", "courteous", "great", "greater", "greatness",
-            # Ritus-/Quellen-Begriffe
-            "umrah", "hikmah", "fitrah", "bismillah", "salat", "zakat", "sunnah",
-            "halal", "haram", "fiqh", "tauheed", "jihad",
-        }:
-            return None
-
         # --- GOD: eindeutig göttlich (aus Embedding-Kandidaten verifiziert) ---
         if clean in {"creator", "divine", "originator", "omnipotent"}:
             return "GOD"
@@ -215,16 +268,28 @@ class WordClassifier:
 
         return self._UNHANDLED
 
-    def is_excluded(self, token: str) -> bool:
-        """True, wenn die if-else-Kaskade das Wort EXPLIZIT als False-Positive
-        ausschliesst (Kategorie None ausdruecklich). Wird auch auf jsonl-Eintraege
-        angewendet, um fehlerhafte KI-Markierungen zu entfernen."""
+    def is_excluded(self, token: str, category: str) -> bool:
+        """True, wenn das Wort für DIESE Kategorie ein False-Positive ist.
+
+        jsonl/KI-Entscheidungen bleiben primär; entfernt werden nur
+        kontext-unabhängig falsche Markierungen (Funktionswörter, neutrale
+        Wörter, definitiv-andere-Kategorie)."""
         clean = re.sub(r"[^\w]", "", token).lower()
         if not clean:
             return True
+        if clean in FUNCTION_WORDS:
+            return True
+
         special = self._special_case(clean)
-        # expliziter Ausschluss = None; _UNHANDLED/echte Kategorie = kein Ausschluss
-        return special is None
+        if special is None:
+            return True  # global nie markieren
+        if special is not self._UNHANDLED:
+            return special != category  # definitiv andere Kategorie
+
+        # UNHANDLED: kategorie-spezifische Ausschlüsse
+        if category == "GOD" and clean in NEVER_GOD:
+            return True
+        return clean in NEUTRAL_CONTENT_EXCLUSIONS.get(category, ())
 
     # ------------------------------------------------------------------
     # Öffentliche Klassifikation
@@ -232,6 +297,8 @@ class WordClassifier:
     def classify(self, token: str) -> Optional[str]:
         clean = re.sub(r"[^\w]", "", token).lower()
         if not clean:
+            return None
+        if clean in FUNCTION_WORDS:
             return None
 
         special = self._special_case(clean)
@@ -241,6 +308,8 @@ class WordClassifier:
         # Regex-Stems (verankert, aus chunked_translations abgeleitet)
         for cat, pat in self.regex_themes.items():
             if pat.search(clean):
+                if cat == "GOD" and clean in NEVER_GOD:
+                    continue  # nicht als Gottheit, andere Kategorie weiter pruefen
                 if clean in self.exclusions.get(cat, ()):
                     return None
                 return cat

@@ -405,7 +405,7 @@ def annotate_highlights(verse, highlights, apply_regex=True):
     # Step 1b: jsonl/KI-False-Positives entfernen (if-else-Kaskade entscheidet
     # explizit, welche Woerter NIE eine Kategorie tragen duerfen).
     for i, token in enumerate(tokens):
-        if i in proc and _WORD_CLASSIFIER.is_excluded(token):
+        if i in proc and _WORD_CLASSIFIER.is_excluded(token, proc[i]):
             del proc[i]
 
     # Step 2: "Most" → attribute shift

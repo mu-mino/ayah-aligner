@@ -203,6 +203,8 @@ PRONOUNS = {
     "yourselves", "themselves",
 }
 
+RELATIVE_PRONOUNS = {"who", "whom", "whose", "which", "what"}
+
 
 # ---------------------------------------------------------------------------
 # WordClassifier: if-else-Kaskade (jeder Fall einzeln) + Regex + Zusatzwörter
@@ -286,6 +288,10 @@ class WordClassifier:
         if not clean:
             return True
         if clean in FUNCTION_WORDS:
+            # Grossgeschriebene Relativpronomen koennen Allah meinen
+            # ("He it is Who has created you") -> in GOD-Kategorie behalten.
+            if category == "GOD" and clean in RELATIVE_PRONOUNS and token and token[0].isupper():
+                return False
             return True
 
         special = self._special_case(clean)

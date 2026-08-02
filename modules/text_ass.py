@@ -464,7 +464,6 @@ def annotate_highlights(verse, highlights, apply_regex=True, base_font_size=42):
         "will", "would", "shall", "should", "can", "could", "may", "might",
         "this", "that", "these", "those",
         "it", "its", "itself", "they", "them", "their", "theirs",
-        "who", "whom", "whose", "which", "what",
         "only", "just", "even", "also", "too", "very", "still", "already",
         "never", "always", "often", "sometimes",
         "muhammad", "moses", "moosa", "ibrahim", "maryam",

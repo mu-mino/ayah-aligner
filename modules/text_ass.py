@@ -7,18 +7,34 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Tuple, Optional, Dict
 import numpy as np
-from llama_cpp import Llama
 
 
 BASE_DIR = Path(__file__).parent.parent
 
-LLM = Llama(
-    model_path="/home/muhammed-emin-eser/.cache/huggingface/hub/models--bartowski--Qwen2.5-14B-Instruct-GGUF/snapshots/05244aa5d871c661c80082a15d3bce44714d068d/Qwen2.5-14B-Instruct-Q4_K_M.gguf",
-    n_ctx=6000,
-    n_threads=12,
-    n_gpu_layers=-1,
-    verbose=True,
-)
+# LLM ist ungenutzt (Annotationen kommen aus get_annotated_text/Regex) –
+# deshalb lazy laden, damit der Modul-Import nicht blockiert.
+_LLM = None
+
+
+def _get_llm():
+    global _LLM
+    if _LLM is None:
+        from llama_cpp import Llama
+
+        _LLM = Llama(
+            model_path=str(
+                Path.home()
+                / ".cache/huggingface/hub/models--bartowski--Qwen2.5-14B-Instruct-GGUF"
+                / "snapshots/05244aa5d871c661c80082a15d3bce44714d068d"
+                / "Qwen2.5-14B-Instruct-Q4_K_M.gguf"
+            ),
+            n_ctx=6000,
+            n_threads=12,
+            n_gpu_layers=-1,
+            verbose=True,
+        )
+    return _LLM
+
 
 
 def seconds_to_timestamp(seconds: float) -> str:
@@ -279,7 +295,94 @@ KNOWN_DIVINE_COMPOUNDS = {
 }
 
 
-def annotate_highlights(verse, highlights):
+# ---------------------------------------------------------------------------
+# Eindeutige Regex-Klassifikation (ohne semantisches Matching / LLM)
+#
+# Basis: tatsaechlicher Wortgebrauch in eng_translation/chunked_translation/*.txt.
+# Stems sind am Token-Anfang verankert, um Substring-False-Positives zu vermeiden
+# (z.B. "commerce" != "merc", "disgrace" != "grace", "persevere" != "severe").
+# _THEME_ARABIC = alternative Schreibweisen / arabische Transkriptionen (Fallback).
+# _THEME_EXCLUSIONS entfernt nachweisliche False-Positives.
+# ---------------------------------------------------------------------------
+
+_THEME_STEMS = {
+    "GOD": ["allah", "god", "lord"],
+    "DESTRUCTIVE": [
+        "torment", "hell", "fire", "disbeliev", "disbelief", "punish", "chastis",
+        "doom", "curse", "wrath", "ruin", "perish", "destroy", "destruct",
+        "arrogant", "polytheist", "idolater", "hypocri", "sinner", "wrongdoer",
+        "transgress", "evildoer", "wicked", "disobedien", "rebel", "calamit",
+        "afflict", "tortur", "scourge", "grievous", "painful", "severe", "misguid",
+        "stray", "blasphem", "mock", "ridicul", "slander", "backbit", "corrupt",
+        "oppress", "tyrann", "envy", "deceiv", "greed", "miser", "boast", "haught",
+        "shirk", "disgrace", "abas", "humiliat", "despair", "regret", "remorse",
+        "scorch", "blaze", "burn", "venge", "retribution", "penalty", "seiz",
+        "dreadful", "awful", "terrible", "miserab", "wretch", "insolent", "ingrate",
+        "ungrateful", "belied", "belying", "reject",
+    ],
+    "CONSTRUCTIVE": [
+        "paradis", "garden", "eden", "jannah", "firdaus", "light", "peace", "bliss",
+        "merc(?:y|iful|ies)", "grac", "glor", "victor", "bount", "favor", "salv",
+        "prosper", "forgiv", "pardon", "guid", "purif", "sav", "reward", "rejoic",
+        "triumph", "bless", "believ", "righteous", "pious", "humbl", "muslim",
+        "submit", "patient", "patience", "steadfast", "devout", "repent", "truthful",
+        "sincere", "taqwa", "sabr", "tawakkul", "content(?:ed|ment)?", "eternal",
+        "radiant", "nobl", "trustworth", "truth", "houri", "salsabil", "kawthar",
+        "siddiq", "martyr", "shahid", "good[- ]?deed", "righteous[- ]?deed", "pure",
+        "excellent", "grateful", "thankful", "admit",
+    ],
+}
+
+_THEME_ARABIC = {
+    "GOD": [
+        "rahman", "raheem", "malik", "quddus", "salam", "mumin", "aziz",
+        "jabbar", "mutakabbir", "khaliq", "bari", "musawwir", "ghaffar", "qahhar",
+        "wahhab", "razzaq", "fattah", "alim", "qabid", "basit", "khafid", "rafi",
+        "muzill", "sami", "basir", "hakam", "adl", "latif", "khabir", "halim",
+        "azim", "ghafur", "shakur", "ali", "kabir", "hafiz", "muqit", "hasib",
+        "jalil", "karim", "raqib", "mujib", "wasi", "hakim", "wadud", "majid",
+        "baith", "shahid", "haqq", "wakil", "qawiy", "matin", "wali", "hayy",
+        "qayyum", "wahid", "ahad", "samad", "qadir", "muqtadir", "zahir", "batin",
+        "barr", "tawwab", "muntaqim", "afuww", "rauf", "hadi", "baqi", "warith",
+        "rashid", "sabur",
+    ],
+    "DESTRUCTIVE": [
+        "mushrik", "mufsid", "munafiq", "nifaq", "rijs", "rijz", "fitnah",
+        "jahannam", "gehenna", "saqar", "saqr", "hutamah", "lahab", "zaqqum",
+        "ghislin", "hamim", "sijjin", "samum", "dukhan", "pharaoh", "firawn",
+        "thamud", "madyan", "midian", "qarun", "sodom", "gomorrah", "nimrod",
+        "tubba",
+    ],
+    "CONSTRUCTIVE": [
+        "tasnim", "illiyyin", "ridwan", "sakinah", "sakina", "sidratulmuntaha",
+        "zanjeebil", "zanjabil", "muqarrab", "qanitin",
+    ],
+}
+
+_THEME_EXCLUSIONS = {
+    "GOD": {"gods", "lords", "lordship", "alhadid", "assamiri", "assamit",
+            "assalamu", "illallah"},
+    "DESTRUCTIVE": {"abasa", "deaddestroyed"},
+    "CONSTRUCTIVE": {"merchandise", "contents", "lightly", "lightning",
+                     "commerce", "commercial", "enlightenment", "flight"},
+}
+
+
+def _compile_theme(cat: str) -> "re.Pattern":
+    arabic = "|".join(_THEME_ARABIC[cat])
+    prefix = r"(?:al|ar|as|at|az|ad|ah|ak|aq|am|an|aw)[- ]?"
+    if cat == "GOD":
+        # "god"/"lord" exakt (Plural = falsche Gottheiten), göttl. Namen mit
+        # al-/ar-Praefix muessen das ganze Token abdecken (vermeidet "alhadid").
+        stems = r"allah\w*|god|lord"
+        return re.compile(rf"(?i)^(?:{stems}|{prefix}(?:{arabic}))$", re.IGNORECASE)
+    stems = "|".join(_THEME_STEMS[cat])
+    return re.compile(rf"(?i)^(?:(?:{stems})\w*|(?:{prefix})?(?:{arabic})\w*)", re.IGNORECASE)
+
+
+REFERENCE_THEMES = {cat: _compile_theme(cat) for cat in _THEME_STEMS}
+
+def annotate_highlights(verse, highlights, apply_regex=True):
     tokens = verse.split()
     n = len(tokens)
 
@@ -309,6 +412,27 @@ def annotate_highlights(verse, highlights):
         raw_clean = token.strip(".,;:!?\"'()[]{}").lower()
         if raw_clean in KNOWN_DIVINE_COMPOUNDS and i not in proc:
             proc[i] = "GOD"
+
+    # Step 3a: eindeutige Regex-Klassifikation (ohne semantisches Matching).
+    # Basis: Wortgebrauch in eng_translation/chunked_translation. GOD höchste
+    # Priorität; DESTRUCTIVE/CONSTRUCTIVE füllen nur nicht-klassifizierte Token.
+    # _THEME_EXCLUSIONS entfernt nachweisliche False-Positives.
+    if apply_regex:
+        for i, token in enumerate(tokens):
+            clean_lower = normalize(token).lower()
+            if not clean_lower:
+                continue
+            cat = None
+            for c, pat in REFERENCE_THEMES.items():
+                if pat.search(clean_lower):
+                    cat = c
+                    break
+            if cat is None or clean_lower in _THEME_EXCLUSIONS.get(cat, ()):
+                continue
+            if cat == "GOD":
+                proc[i] = "GOD"
+            elif i not in proc:
+                proc[i] = cat
 
     # Step 3b: override misclassifications for unambiguous divine words
     for i, token in enumerate(tokens):
@@ -440,7 +564,10 @@ def build_ass(
                 for k, v in ann.items():
                     semantic_content[int(k) + offset + 1] = v
 
-        highlighted = annotate_highlights(e.text, semantic_content)
+        is_header = i == 0 and treat_first_as_header
+        highlighted = annotate_highlights(
+            e.text, semantic_content, apply_regex=not is_header
+        )
         wrapped = wrap_ass_text(
             highlighted if highlighted else e.text, width, font_size
         )

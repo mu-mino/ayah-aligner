@@ -310,15 +310,18 @@ _THEME_STEMS = {
     "DESTRUCTIVE": [
         "torment", "hell", "fire", "disbeliev", "disbelief", "punish", "chastis",
         "doom", "curse", "wrath", "ruin", "perish", "destroy", "destruct",
-        "arrogant", "polytheist", "idolater", "hypocri", "sinner", "wrongdoer",
-        "transgress", "evildoer", "wicked", "disobedien", "rebel", "calamit",
-        "afflict", "tortur", "scourge", "grievous", "painful", "severe", "misguid",
-        "stray", "blasphem", "mock", "ridicul", "slander", "backbit", "corrupt",
-        "oppress", "tyrann", "envy", "deceiv", "greed", "miser", "boast", "haught",
-        "shirk", "disgrace", "abas", "humiliat", "despair", "regret", "remorse",
-        "scorch", "blaze", "burn", "venge", "retribution", "penalty", "seiz",
-        "dreadful", "awful", "terrible", "miserab", "wretch", "insolent", "ingrate",
-        "ungrateful", "belied", "belying", "reject",
+        "arrogant", "polytheist", "idolater", "hypocri", "sin(?:s|ners?)?",
+        "wrongdoer", "transgress", "evildoer", "wicked", "disobedien", "rebel",
+        "calamit", "afflict", "tortur", "scourge", "grievous", "painful", "severe",
+        "misguid", "stray", "blasphem", "mock", "ridicul", "slander", "backbit",
+        "corrupt", "oppress", "tyrann", "envy", "deceiv", "greed", "miser", "boast",
+        "haught", "shirk", "disgrace", "abas", "humiliat", "despair", "regret",
+        "remorse", "scorch", "blaze", "burn", "venge", "retribution", "penalty",
+        "seiz", "dreadful", "awful", "terrible", "miserab", "wretch", "insolent",
+        "ingrate", "ungrateful", "belied", "belying", "reject",
+        "evil", "nay", "deny", "denial", "woe", "falsehood", "vain", "kill",
+        "injustice", "alas", "munkar", "shame", "hostil", "insult", "haram",
+        "adultery", "steal", "stole", "stolen", "sedition", "defame",
     ],
     "CONSTRUCTIVE": [
         "paradis", "garden", "eden", "jannah", "firdaus", "light", "peace", "bliss",
@@ -469,7 +472,7 @@ def annotate_highlights(verse, highlights, apply_regex=True):
     for i, token in enumerate(tokens):
         clean = normalize(token).lower()
         if clean in NEVER_GOD:
-            if i in proc:
+            if proc.get(i) == "GOD":
                 del proc[i]
 
     # Step 4: track parentheses depth

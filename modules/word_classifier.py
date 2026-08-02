@@ -193,6 +193,10 @@ NEVER_GOD = {
     # Ritus-/Quellen-Begriffe
     "umrah", "hikmah", "fitrah", "bismillah", "salat", "zakat", "sunnah",
     "halal", "haram", "fiqh", "tauheed", "jihad",
+    # Pronomen: kontextabhaengig (koennen den Propheten meinen, z.B.
+    # "Peace be upon him"). NIE als Gottheit markieren.
+    "he", "we", "him", "his", "our", "you", "my", "us", "me", "your", "i",
+    "himself", "ourselves", "ours", "yours",
 }
 
 

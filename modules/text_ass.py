@@ -393,7 +393,7 @@ from modules.word_classifier import WordClassifier as _WordClassifier
 
 _WORD_CLASSIFIER = _WordClassifier(REFERENCE_THEMES, _THEME_EXCLUSIONS)
 
-def annotate_highlights(verse, highlights, apply_regex=True):
+def annotate_highlights(verse, highlights, apply_regex=True, base_font_size=42):
     tokens = verse.split()
     n = len(tokens)
 
@@ -490,31 +490,46 @@ def annotate_highlights(verse, highlights, apply_regex=True):
         paren_depth[i] = depth
         depth -= token.count(")")
 
-    # Step 5: single-pass token formatting
+    # Step 5: single-pass token formatting.
+    # Klammer-Stil (\fs30 kleiner, \fs<base> zurueck) UND Highlight (Farbe/Fett)
+    # werden KOMBINIERT - sonst leakt ein offenes \fs30 ohne \fs40-Restore
+    # (wenn das schliessende Klammer-Token hervorgehoben ist) und der restliche
+    # Text der Zeile wird faelschlich klein gerendert.
+    small_fs = r"\fs30"
+    restore_fs = r"\fs" + str(base_font_size)
     ass_lines = []
     for i, token in enumerate(tokens):
         in_parens = paren_depth[i] > 0
         hl = proc.get(i)
+        is_first = i == 0 or paren_depth[i - 1] == 0
+        is_last = i + 1 >= n or paren_depth[i + 1] == 0
+
+        if not in_parens and not hl:
+            ass_lines.append(token)
+            continue
+
+        open_tags, close_tags = "", ""
+        if in_parens and is_first:
+            open_tags += small_fs
+        if in_parens and is_last:
+            close_tags += restore_fs
+        if in_parens and not hl:
+            # Klammer-Grau ein / am Klammer-Ende wieder weiss
+            open_tags += r"\c&HAAAAAA&"
+            if is_last:
+                close_tags = r"\c&HFFFFFF&" + close_tags
 
         if hl:
             color = COLOR_MAP.get(hl, COLOR_MAP["NONE"])
+            open_tags += r"\c" + color
             if hl == "GOD":
-                ass_lines.append(f"{{\\c{color}}}{{\\b1}}{token}{{\\b0}}{{\\c}}")
-            else:
-                ass_lines.append(f"{{\\c{color}}}{token}{{\\c}}")
-        elif in_parens:
-            is_first = i == 0 or paren_depth[i - 1] == 0
-            is_last = i + 1 >= n or paren_depth[i + 1] == 0
-            if is_first and not is_last:
-                ass_lines.append(f"{{\\fs30\\c&HAAAAAA&}}{token}")
-            elif is_last and not is_first:
-                ass_lines.append(f"{{\\c&HAAAAAA&}}{token}{{\\fs40\\c&HFFFFFF&}}")
-            elif is_first and is_last:
-                ass_lines.append(f"{{\\fs30\\c&HAAAAAA&}}{token}{{\\fs40\\c&HFFFFFF&}}")
-            else:
-                ass_lines.append(f"{{\\c&HAAAAAA&}}{token}")
-        else:
-            ass_lines.append(token)
+                open_tags += r"\b1"
+                close_tags += r"\b0"
+            close_tags += r"\c"
+
+        prefix = "{" + open_tags + "}" if open_tags else ""
+        suffix = "{" + close_tags + "}" if close_tags else ""
+        ass_lines.append(prefix + token + suffix)
 
     return " ".join(ass_lines)
 
@@ -576,7 +591,8 @@ def build_ass(
 
         is_header = i == 0 and treat_first_as_header
         highlighted = annotate_highlights(
-            e.text, semantic_content, apply_regex=not is_header
+            e.text, semantic_content, apply_regex=not is_header,
+            base_font_size=font_size,
         )
         wrapped = wrap_ass_text(
             highlighted if highlighted else e.text, width, font_size

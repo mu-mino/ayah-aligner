@@ -161,6 +161,41 @@ def read_mapping(path: Path) -> List[str]:
     return lines
 
 
+def dedupe_mapping_lines(lines: List[str]) -> List[str]:
+    """
+    Entfernt redundante aufeinanderfolgende Mapping-Zeilen mit gleichem
+    Timestamp:
+        - identischer Inhalt  -> nur die erste behalten
+        - Zeile2-Inhalt ist in Zeile1-Inhalt enthalten (Zeile1 deckt Zeile2 ab)
+          -> nur die erste behalten
+    Laesst die Funktionalitaet unangetastet, entfernt nur Ueberfluessiges
+    (z.B. den eigenen Circle-Chunk-Sub-Eintrag, der den Circle-Eintrag dupliziert).
+    """
+    out: List[str] = []
+    for line in lines:
+        stripped = line.rstrip("\n")
+        m = re.match(r"^(\[[^\]]+\])\s*::\s*(.*)$", stripped)
+        if m and out:
+            pm = re.match(r"^(\[[^\]]+\])\s*::\s*(.*)$", out[-1].rstrip("\n"))
+            if pm and m.group(1) == pm.group(1):
+                cur = m.group(2).strip()
+                prev = pm.group(2).strip()
+                if cur == prev or (cur and cur in prev):
+                    continue
+        out.append(line)
+    return out
+
+
+def dedupe_mapping_file(path: Path) -> None:
+    """Wendet dedupe_mapping_lines auf eine Mapping-Datei an (in-place)."""
+    if not path.exists():
+        return
+    lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+    deduped = dedupe_mapping_lines(lines)
+    if deduped != lines:
+        path.write_text("".join(deduped), encoding="utf-8")
+
+
 def parse_mapping_line(line: str) -> Optional[Tuple[str, str]]:
     """
     Parst eine Mapping-Zeile und gibt (timestamp, inhalt) zurück.

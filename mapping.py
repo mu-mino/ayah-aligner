@@ -31,6 +31,7 @@ from modules.circlelog import (
     build_verse_line,
     seconds_to_timestamp,
     write_mapping,
+    dedupe_mapping_file,
 )
 from modules.whispertranscribe import transcribe_chunks, load_model
 from modules.semanticmatch import (
@@ -246,6 +247,7 @@ def run(
     # 4. Sub-Fenster transkribieren + matchen + Mapping patchen
     # ------------------------------------------------------------------
     groups_with_subs = [g for g in groups if g.sub_windows]
+    dedupe_mapping_file(mapping_path)
     if not groups_with_subs:
         return
     whisper_model = load_model(device=whisper_device)
@@ -278,6 +280,8 @@ def run(
                 affected_timestamp=affected_timestamp,
                 session=session,
             )
+
+    dedupe_mapping_file(mapping_path)
 
 
 # ---------------------------------------------------------------------------

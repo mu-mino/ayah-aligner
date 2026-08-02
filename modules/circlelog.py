@@ -163,13 +163,13 @@ def read_mapping(path: Path) -> List[str]:
 
 def dedupe_mapping_lines(lines: List[str]) -> List[str]:
     """
-    Entfernt redundante aufeinanderfolgende Mapping-Zeilen mit gleichem
-    Timestamp:
-        - identischer Inhalt  -> nur die erste behalten
-        - Zeile2-Inhalt ist in Zeile1-Inhalt enthalten (Zeile1 deckt Zeile2 ab)
-          -> nur die erste behalten
-    Laesst die Funktionalitaet unangetastet, entfernt nur Ueberfluessiges
-    (z.B. den eigenen Circle-Chunk-Sub-Eintrag, der den Circle-Eintrag dupliziert).
+    Entfernt redundante aufeinanderfolgende Mapping-Zeilen:
+        - identischer Inhalt (egal welcher Timestamp) -> nur die erste behalten
+          (entfernt z.B. den Trailing-Sub-Window-Artfakt, der den vollen Vers
+          dupliziert, obwohl er schon an der Circle-Zeit stand)
+        - gleicher Timestamp UND Zeile2-Inhalt in Zeile1-Inhalt enthalten
+          (Zeile1 deckt Zeile2 ab) -> nur die erste behalten
+    Laesst die Funktionalitaet unangetastet, entfernt nur Ueberfluessiges.
     """
     out: List[str] = []
     for line in lines:
@@ -177,10 +177,12 @@ def dedupe_mapping_lines(lines: List[str]) -> List[str]:
         m = re.match(r"^(\[[^\]]+\])\s*::\s*(.*)$", stripped)
         if m and out:
             pm = re.match(r"^(\[[^\]]+\])\s*::\s*(.*)$", out[-1].rstrip("\n"))
-            if pm and m.group(1) == pm.group(1):
+            if pm:
                 cur = m.group(2).strip()
                 prev = pm.group(2).strip()
-                if cur == prev or (cur and cur in prev):
+                if cur == prev:
+                    continue
+                if m.group(1) == pm.group(1) and (cur and cur in prev):
                     continue
         out.append(line)
     return out

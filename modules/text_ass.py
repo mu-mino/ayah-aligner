@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import json
+import sys
 import re
 import subprocess
 from dataclasses import dataclass
@@ -385,6 +386,13 @@ def _compile_theme(cat: str) -> "re.Pattern":
 
 REFERENCE_THEMES = {cat: _compile_theme(cat) for cat in _THEME_STEMS}
 
+
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
+from modules.word_classifier import WordClassifier as _WordClassifier
+
+_WORD_CLASSIFIER = _WordClassifier(REFERENCE_THEMES, _THEME_EXCLUSIONS)
+
 def annotate_highlights(verse, highlights, apply_regex=True):
     tokens = verse.split()
     n = len(tokens)
@@ -393,6 +401,12 @@ def annotate_highlights(verse, highlights, apply_regex=True):
     proc = {}
     for k, v in highlights.items():
         proc[int(k)] = v.upper() if isinstance(v, str) else v
+
+    # Step 1b: jsonl/KI-False-Positives entfernen (if-else-Kaskade entscheidet
+    # explizit, welche Woerter NIE eine Kategorie tragen duerfen).
+    for i, token in enumerate(tokens):
+        if i in proc and _WORD_CLASSIFIER.is_excluded(token):
+            del proc[i]
 
     # Step 2: "Most" → attribute shift
     for idx in sorted(proc.keys()):
@@ -416,21 +430,14 @@ def annotate_highlights(verse, highlights, apply_regex=True):
         if raw_clean in KNOWN_DIVINE_COMPOUNDS and i not in proc:
             proc[i] = "GOD"
 
-    # Step 3a: eindeutige Regex-Klassifikation (ohne semantisches Matching).
-    # Basis: Wortgebrauch in eng_translation/chunked_translation. GOD höchste
-    # Priorität; DESTRUCTIVE/CONSTRUCTIVE füllen nur nicht-klassifizierte Token.
-    # _THEME_EXCLUSIONS entfernt nachweisliche False-Positives.
+    # Step 3a: eindeutige Klassifikation (ohne semantisches Matching/LLM).
+    # _WORD_CLASSIFIER = Embedding-gestuetzte Regex-Stems + verifizierte
+    # Zusatzwoerter + if-else-Kaskade (schliesst False-Positives aus).
+    # GOD hat hoechste Prioritaet; D/C fuellen nur nicht-klassifizierte Token.
     if apply_regex:
         for i, token in enumerate(tokens):
-            clean_lower = normalize(token).lower()
-            if not clean_lower:
-                continue
-            cat = None
-            for c, pat in REFERENCE_THEMES.items():
-                if pat.search(clean_lower):
-                    cat = c
-                    break
-            if cat is None or clean_lower in _THEME_EXCLUSIONS.get(cat, ()):
+            cat = _WORD_CLASSIFIER.classify(token)
+            if cat is None:
                 continue
             if cat == "GOD":
                 proc[i] = "GOD"

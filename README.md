@@ -17,7 +17,7 @@ Video + Text file
 │                                                             │
 │  ┌──────────────────┐                                       │
 │  │ recognizecircle  │  detect_markers(frame)                │
-│  │                  │  → number of detected circles         │
+│  │                  │  → (circles, end_with_last_verse)     │
 │  └────────┬─────────┘                                       │
 │           │                                                 │
 │    ┌──────┴──────┐                                          │

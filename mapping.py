@@ -90,6 +90,7 @@ class WindowGroup:
     verses: List[Tuple[int, str]] = field(default_factory=list)
     mapping_line: str = ""
     mapping_ts: str = ""
+    end_with_last_verse: bool = False
 
     @property
     def all_windows(self) -> List[FrameWindow]:
@@ -172,11 +173,15 @@ def run(
                 ),
                 gray,
             )
-        n = detect_markers_from_gray(gray)
+        n, end_with_last_verse = detect_markers_from_gray(gray)
         if i == 0 and n > 0:
             first_window_has_circle = True
         if n > 0:
-            current_group = WindowGroup(circle_window=window, circle_count=n)
+            current_group = WindowGroup(
+                circle_window=window,
+                circle_count=n,
+                end_with_last_verse=end_with_last_verse,
+            )
             groups.append(current_group)
         elif current_group is not None:
             current_group.sub_windows.append(window)
@@ -217,9 +222,22 @@ def run(
         numbered_lines = numbered_lines[taken:]
         verse_number += taken
 
+        # end_with_last_verse (Einzel-Kreis): kein neuer Vers im aktuellen
+        # Circle-Window-Frame — der Vers wird stattdessen am nächsten
+        # Window-Frame gerendert (erster Sub-Fenster bzw. nächste Gruppe).
+        if group.end_with_last_verse and group.circle_count == 1:
+            if group.sub_windows:
+                frame_start_sec = group.sub_windows[0].start_sec
+            elif idx + 1 < len(groups):
+                frame_start_sec = groups[idx + 1].circle_window.start_sec
+            else:
+                frame_start_sec = group.circle_window.start_sec
+        else:
+            frame_start_sec = group.circle_window.start_sec
+
         if unshifted_mode:
             # Fall 1 oder nach Fall-3/4-Split: eigener Timestamp, kein Shift
-            ts = seconds_to_timestamp(group.circle_window.start_sec)
+            ts = seconds_to_timestamp(frame_start_sec)
             group.mapping_ts = ts
             line = build_verse_line(ts, group.verses)
             group.mapping_line = line
@@ -236,7 +254,7 @@ def run(
             continue
         else:
             # Fall 2 + normaler Shift-Flow
-            ts = seconds_to_timestamp(groups[idx].circle_window.start_sec)
+            ts = seconds_to_timestamp(frame_start_sec)
             group.mapping_ts = ts
             line = build_verse_line(ts, group.verses)
             group.mapping_line = line

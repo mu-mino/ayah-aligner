@@ -39,6 +39,9 @@ RING_STROKE_FRACTION: float = 0.22  # Anteil des Durchmessers für den Erosions-
 CIRCLE_PATCH_SIZE: int = 64
 CIRCLE_REPEAT_SIM_THRESHOLD: float = 0.95
 
+# Leichter Abstand links vom linkesten Kreis, ab dem auf weiße Pixel geprüft wird.
+CIRCLE_END_WHITE_GAP_PX: int = 10
+
 
 # ---------------------------------------------------------------------------
 # Hilfsfunktionen
@@ -64,6 +67,24 @@ def _shrink_range(rng: Tuple[float, float], pct: float) -> Tuple[float, float]:
     span = rng[1] - rng[0]
     pad = span * pct
     return (rng[0] + pad, rng[1] - pad)
+
+
+def _leftmost_circle_ends_text(
+    binary: np.ndarray, candidates: List["RingCandidate"]
+) -> bool:
+    """
+    True, wenn links vom am weitesten links liegenden Kreis (nach einem
+    kleinen Abstand, im vertikalen Band des Kreises bis zum Bildrand) keine
+    weißen Pixel mehr stehen — der Kreis markiert das Ende des gerenderten
+    Textes (end_with_last_verse).
+    """
+    leftmost = min(candidates, key=lambda c: c.bbox[0])
+    x, y, w, h = leftmost.bbox
+    x_left = max(0, x - CIRCLE_END_WHITE_GAP_PX)
+    region = binary[y : y + h, 0:x_left]
+    if region.size == 0:
+        return True
+    return cv2.countNonZero(region) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -518,15 +539,21 @@ def normalize_ring_mask(gray: np.ndarray) -> Tuple[np.ndarray, int]:
 # ---------------------------------------------------------------------------
 
 
-def detect_markers_from_gray(gray: np.ndarray) -> int:
+def detect_markers_from_gray(gray: np.ndarray) -> Tuple[int, bool]:
     """
     Erkennt Ring-Marker in einem Graustufenbild.
-    Gibt die Anzahl der erkannten Marker zurück.
+
+    Rückgabe: (anzahl_erkannter_Marker, end_with_last_verse).
+
+    end_with_last_verse ist True, wenn der am weitesten links liegende Kreis
+    nach einem kleinen Abstand keine weißen Pixel mehr links von sich hat
+    (Ende des gerenderten Textes).
     """
     binary = _threshold_binary(gray)
     candidates, _ = _find_ring_candidates(binary, _get_empirical_bounds())
     if candidates:
-        return len(candidates)
+        end_with_last_verse = _leftmost_circle_ends_text(binary, candidates)
+        return len(candidates), end_with_last_verse
 
     # Fallback: ältere Marker-Form (einfache Flächen-/Ratio-Prüfung)
     contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -537,10 +564,10 @@ def detect_markers_from_gray(gray: np.ndarray) -> int:
         area = cv2.contourArea(cnt)
         if 1800 < area < 6000 and 0.85 < aspect_ratio < 1.05:
             count += 1
-    return count
+    return count, False
 
 
-def detect_markers(path: str) -> int:
+def detect_markers(path: str) -> Tuple[int, bool]:
     """Wrapper für detect_markers_from_gray (erwartet BGR- oder Graustufenbild)."""
     frame = cv2.imread(path)
     frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -552,6 +579,6 @@ if __name__ == "__main__":
     parser.add_argument("path")
     args = parser.parse_args()
 
-    circle_count = detect_markers(args.path)
+    circle_count, _ = detect_markers(args.path)
     print(circle_count)
 

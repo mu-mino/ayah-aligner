@@ -120,9 +120,96 @@ def _verse_at(verse_ranges, pos: int):
     return None
 
 
+def _verses_in_span(verse_ranges, start: int, end: int):
+    """Liefert alle Versnummern, die der Span [start, end) überlappt.
+
+    Ein Fenster, dessen Audio das Ende des einen und den Anfang des nächsten
+    Verses rezitiert, gehört zu BEIDEN Versen — so geht der nächste
+    Vers-Anfang nicht verloren.
+    """
+    verses = []
+    for ayah, vs, ve, _text in verse_ranges:
+        if start < ve and end > vs:
+            verses.append(ayah)
+    return verses
+
+
 # ---------------------------------------------------------------------------
 # Pipeline
 # ---------------------------------------------------------------------------
+
+
+
+def _balanced_paren_group(text: str, start: int) -> str:
+    """Liefert das komplette, verschachtelungsbewusste Klammer-Stueck
+    "(...)" ab Position start in text (bis zur matchenden schliessenden
+    Klammer, inklusive aller enthaltenen Klammern)."""
+    depth = 0
+    for i in range(start, len(text)):
+        if text[i] == "(":
+            depth += 1
+        elif text[i] == ")":
+            depth -= 1
+            if depth == 0:
+                return text[start:i + 1]
+    return text[start:]
+
+
+def _matching_close(content: str, start_depth: int) -> int:
+    """Index der schliessenden Klammer in content, die bei start_depth
+    offener Klammern die Tiefe auf 0 bringt; -1 wenn keine vorhanden."""
+    depth = start_depth
+    for j, ch in enumerate(content):
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                return j
+    return -1
+
+
+def _assemble_mapping_lines(entries) -> list:
+    """Baut Mapping-Zeilen aus sortierten '[HH:MM:SS] :: text'-Eintraegen.
+
+    Es darf keine Zeile mit einer Klammer anfangen oder mit einer
+    ungeschlossenen "(" enden: der komplette Klammerblock wird an die
+    jeweilige Nachbarzeile angehaengt, damit die naechste Zeile mit
+    sauberem Text startet (keine Klammer-/Kommentar-Ueberreste).
+    """
+    lines = []
+    for _, line in entries:
+        _ts, _content = line.split(" :: ", 1)
+        _content = _content.lstrip()
+        while _content.startswith("("):
+            _group = _balanced_paren_group(_content, 0)
+            if not _group.endswith(")") or not lines:
+                break
+            lines[-1] += _group
+            _content = _content[len(_group):].lstrip()
+        if _content:
+            lines.append(f"{_ts} :: {_content}")
+
+    i = 0
+    while i < len(lines) - 1:
+        cur = lines[i]
+        if not cur.rstrip().endswith("("):
+            i += 1
+            continue
+        _ts, _content = lines[i + 1].split(" :: ", 1)
+        cut = _matching_close(_content, 1)
+        if cut < 0:
+            i += 1
+            continue
+        lines[i] = cur + _content[:cut + 1]
+        remainder = _content[cut + 1:].lstrip()
+        if remainder:
+            lines[i + 1] = f"{_ts} :: {remainder}"
+        else:
+            del lines[i + 1]
+            continue
+        i += 1
+    return lines
 
 
 def run(
@@ -276,8 +363,9 @@ def run(
         scope = {v: all_verses[v] for v in range(lo, hi + 1) if v in all_verses}
         s = run_matching(chunks=chunks, surah=surah, dict_of_verses=scope, fill_gaps=False)
         for result in s.results:
-            verse = _verse_at(s.verse_ranges, result.span.start)
-            if verse is not None:
+            for verse in _verses_in_span(
+                s.verse_ranges, result.span.start, result.span.end
+            ):
                 chunks_by_verse.setdefault(verse, []).append(result.chunk)
 
     # Pass 2 (n=1): pro erkanntem Vers gegen DIESEN Vers, fill_gaps=True
@@ -297,7 +385,7 @@ def run(
                 entries.append((result.chunk.window.start_sec, f"[{ts}] :: {text}"))
 
     entries.sort(key=lambda item: item[0])
-    mapping_lines.extend(line for _, line in entries)
+    mapping_lines.extend(_assemble_mapping_lines(entries))
     write_mapping(mapping_lines, mapping_path)
     dedupe_mapping_file(mapping_path)
 

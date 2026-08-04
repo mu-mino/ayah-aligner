@@ -216,15 +216,16 @@ RELATIVE_PRONOUNS = {"who", "whom", "whose", "which", "what"}
 # ---------------------------------------------------------------------------
 PROPHET_NAMES = {
     "muhammad", "muhammed", "ahmed", "ahmad",
-    "adam", "noah", "nooh", "idris", "enoch", "hud",
-    "salih", "saleh", "ibrahim", "abraham",
-    "lot", "lout", "ismail", "ishmael", "isaac", "jacob", "yaqoob",
+    "adam", "noah", "nooh", "idris", "enoch", "hud", "hood",
+    "salih", "saleh", "ibrahim", "ibraheem", "abraham",
+    "lot", "lout", "ismail", "ishmael", "isaac", "ishaque", "jacob", "yaqoob",
     "joseph", "yoosuf", "yusuf", "job", "ayub",
     "shuaib", "moses", "moosa", "musa", "aaron", "haroon",
     "david", "dawood", "dawud", "solomon", "sulaiman",
-    "elias", "elisha", "al-yasa", "yasa", "dhul-kifl",
+    "elias", "elisha", "al-yasa", "alyasa", "yasa", "dhul-kifl", "dhulkifl",
     "yunus", "yoonus", "jonah", "zakariya", "zachariah", "zachariya",
-    "john", "yahya", "iesa", "jesus", "imran", "luqman", "uzair", "ezra",
+    "john", "yahya", "iesa", "jesus", "messiah",
+    "imran", "luqman", "uzair", "ezra", "khidr", "dhulqarnain",
 }
 
 ANGEL_NAMES = {
@@ -271,9 +272,14 @@ class WordClassifier:
             return "GOD"
 
         # --- Propheten-/Engel-Namen: gross geschrieben = Eigenname -> blau.
+        # Die Grossschreibung wird am ERSTEN alphabetischen Zeichen geprueft,
+        # damit auch "(Muhammad" oder "Moosa," als Eigenname erkannt wird.
         # "angel(s)" als allgemeines Wort bleibt immer blau. ---
-        if clean in PROPHET_NAMES or clean in ANGEL_NAMES:
-            if token and token[0].isupper():
+        if any(clean.startswith(n) for n in PROPHET_NAMES) or any(
+            clean.startswith(n) for n in ANGEL_NAMES
+        ):
+            first_alpha = next((ch for ch in token if ch.isalpha()), "")
+            if first_alpha.isupper():
                 return "CONSTRUCTIVE"
         if clean in {"angel", "angels"}:
             return "CONSTRUCTIVE"

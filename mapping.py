@@ -134,6 +134,22 @@ def _verses_in_span(verse_ranges, start: int, end: int):
     return verses
 
 
+def _verse_abs_range(verse_ranges, verse: int):
+    """Liefert (start, end) des Verses *verse* in den Scope-Koordinaten."""
+    for ayah, vs, ve, _text in verse_ranges:
+        if ayah == verse:
+            return vs, ve
+    return 0, 0
+
+
+def _format_verse_span(verse_text: str, verse: int, start: int, end: int) -> str:
+    """Formatiert einen Span [start, end) im Vers-Text mit Versnummer-Prefix."""
+    text = verse_text[start:end]
+    if start == 0:
+        text = f"{verse}: {text}"
+    return text.strip()
+
+
 # ---------------------------------------------------------------------------
 # Pipeline
 # ---------------------------------------------------------------------------
@@ -169,6 +185,17 @@ def _matching_close(content: str, start_depth: int) -> int:
     return -1
 
 
+def _open_depth(content: str) -> int:
+    """Anzahl der am Ende von content noch ungeschlossenen '(' (0 = sauber)."""
+    depth = 0
+    for ch in content:
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth = max(0, depth - 1)
+    return depth
+
+
 def _assemble_mapping_lines(entries) -> list:
     """Baut Mapping-Zeilen aus sortierten '[HH:MM:SS] :: text'-Eintraegen.
 
@@ -193,15 +220,25 @@ def _assemble_mapping_lines(entries) -> list:
     i = 0
     while i < len(lines) - 1:
         cur = lines[i]
-        if not cur.rstrip().endswith("("):
+        open_depth = _open_depth(cur)
+        if open_depth == 0:
             i += 1
             continue
         _ts, _content = lines[i + 1].split(" :: ", 1)
-        cut = _matching_close(_content, 1)
+        # Endet die Zeile mit "(", wird nur die abschliessende Klammer
+        # geschlossen (bisheriges Verhalten). Endet sie mitten in einer
+        # Klammer, wird die volle offene Tiefe geschlossen.
+        start_depth = 1 if cur.rstrip().endswith("(") else open_depth
+        cut = _matching_close(_content, start_depth)
         if cut < 0:
             i += 1
             continue
-        lines[i] = cur + _content[:cut + 1]
+        joiner = (
+            ""
+            if cur.endswith(" ") or cur.endswith("(") or _content.startswith("(")
+            else " "
+        )
+        lines[i] = cur + joiner + _content[:cut + 1]
         remainder = _content[cut + 1:].lstrip()
         if remainder:
             lines[i + 1] = f"{_ts} :: {remainder}"
@@ -327,15 +364,25 @@ def run(
     #        die n Verse — vollständige Abdeckung).
     #      - Einzel-Vers-Gruppen (n=1): erst rohe Spans gegen [N-1, N+1]
     #        (Kreise erscheinen oft einen Vers zu früh → Off-by-One-Korrektur),
-    #        dann fill_gaps=True gegen den erkannten Vers.
+    #        dann die korrekten Pass-1-Spans auf die Vers-Koordinaten
+    #        projizieren und Lücken füllen.
+    #
+    #    Multi-Vers-Verse werden im n=1-Pfad NICHT erneut beansprucht: Ein
+    #    Nachbarfenster einer Einzel-Vers-Gruppe, dessen Audio in einen
+    #    Multi-Vers-Vers kreuzt, würde sonst denselben Vers ein zweites Mal
+    #    füllen (Duplikat, z.B. V16).
     # ------------------------------------------------------------------
     if not any(g.verses for g in groups):
         write_mapping(mapping_lines, mapping_path)
         return
     whisper_model = load_model(device=whisper_device)
 
+    multi_verse_verses = {
+        verse for group in groups if len(group.verses) > 1 for verse, _ in group.verses
+    }
+
     entries: List[Tuple[float, str]] = []
-    chunks_by_verse: Dict[int, list] = {}
+    verse_spans: Dict[int, list] = {}
 
     for group in groups:
         if not group.verses:
@@ -367,7 +414,10 @@ def run(
                     )
             continue
 
-        # Einzel-Vers-Gruppe: Off-by-One-Korrektur über rohe Spans
+        # Einzel-Vers-Gruppe: rohe Spans gegen [N-1, N+1]. Die korrekten
+        # Pass-1-Positionen werden auf die Vers-Koordinaten projiziert (KEIN
+        # Re-Match gegen den Einzelvers — das verursachte bei Grenz-Fenstern
+        # falsche Spans, z.B. Vers-17-Schwanz statt -Anfang).
         first_v = group.verses[0][0]
         lo = max(1, first_v - 1)
         hi = min(len(all_verses), first_v + 1)
@@ -377,23 +427,35 @@ def run(
             for verse in _verses_in_span(
                 s.verse_ranges, result.span.start, result.span.end
             ):
-                chunks_by_verse.setdefault(verse, []).append(result.chunk)
+                if verse in multi_verse_verses:
+                    continue
+                vs, ve = _verse_abs_range(s.verse_ranges, verse)
+                istart = max(result.span.start, vs) - vs
+                iend = min(result.span.end, ve) - vs
+                if iend > istart:
+                    verse_spans.setdefault(verse, []).append(
+                        (result.chunk.window, istart, iend)
+                    )
 
-    # Pass 2 (n=1): pro erkanntem Vers gegen DIESEN Vers, fill_gaps=True
-    for verse, vchunks in chunks_by_verse.items():
-        session = run_matching(
-            chunks=vchunks,
-            surah=surah,
-            dict_of_verses={verse: all_verses[verse]},
-            fill_gaps=True,
-        )
-        for result in session.results:
-            text = _format_span_with_verse_ids(
-                session, result.span.start, result.span.end
-            )
+    # Vers-Abdeckung (n=1): Lücken füllen UND Überlappungen beschneiden
+    # (vorn/mitte/hinten — Whisper ist nie perfekt), ein Eintrag pro Fenster.
+    for verse, spans in verse_spans.items():
+        spans.sort(key=lambda x: x[1])
+        if spans and spans[0][1] > 0:
+            w, _st, en = spans[0]
+            spans[0] = (w, 0, en)
+        for i in range(1, len(spans)):
+            prev_w, prev_st, _prev_en = spans[i - 1]
+            _cur_w, cur_st, _cur_en = spans[i]
+            spans[i - 1] = (prev_w, prev_st, cur_st)
+        if spans and spans[-1][2] < len(all_verses[verse]):
+            w, st, _en = spans[-1]
+            spans[-1] = (w, st, len(all_verses[verse]))
+        for window, istart, iend in spans:
+            text = _format_verse_span(all_verses[verse], verse, istart, iend)
             if text.strip():
-                ts = seconds_to_timestamp(result.chunk.window.start_sec)
-                entries.append((result.chunk.window.start_sec, f"[{ts}] :: {text}"))
+                ts = seconds_to_timestamp(window.start_sec)
+                entries.append((window.start_sec, f"[{ts}] :: {text}"))
 
     entries.sort(key=lambda item: item[0])
     mapping_lines.extend(_assemble_mapping_lines(entries))

@@ -209,7 +209,18 @@ def _assemble_mapping_lines(entries) -> list:
             del lines[i + 1]
             continue
         i += 1
-    return lines
+
+    # Zeilen mit demselben Timestamp zu EINER Zeile zusammenführen: Ein
+    # Grenz-Fenster rezitiert das Vers-Ende UND den Vers-Anfang — das muss in
+    # einer Mapping-Zeile erscheinen, nicht als zwei Einträge.
+    merged = []
+    for ln in lines:
+        ts = ln.split(" :: ", 1)[0]
+        if merged and merged[-1].split(" :: ", 1)[0] == ts:
+            merged[-1] += " " + ln.split(" :: ", 1)[1].lstrip()
+        else:
+            merged.append(ln)
+    return merged
 
 
 def run(

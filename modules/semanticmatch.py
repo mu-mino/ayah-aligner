@@ -564,6 +564,7 @@ def run_matching(
     chunks: List[ChunkTranscription],
     dict_of_verses: dict,
     surah: int,
+    fill_gaps: bool = True,
 ) -> MatchSession:
     """
     Matcht jeden arabischen Chunk gegen den englischen Vers-Text via quran.com API.
@@ -573,6 +574,10 @@ def run_matching(
         2. Arabischen Chunk gegen Vers-Wörter matchen → Positionen [i, j]
         3. Wort-Übersetzungen [i..j] konkatenieren → Query
         4. SequenceMatcher findet besten Substring-Match in verse_text
+
+    fill_gaps=True (Standard) erzwingt lückenlose Abdeckung des Vers-Texts
+    (vorn, in der Mitte und hinten entstehen durch Whisper Lücken, die
+    aufgefüllt werden). fill_gaps=False liefert die rohen Alignment-Spans.
     """
     mapping_parts = []
     verse_ranges: List[Tuple[int, int, int, str]] = []
@@ -630,7 +635,8 @@ def run_matching(
             )
         )
 
-    _fill_gaps(session.results, session.mapping_text)
+    if fill_gaps:
+        _fill_gaps(session.results, session.mapping_text)
     session.guard = run_guard(session.results, session.mapping_text)
     return session
 

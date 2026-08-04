@@ -16,7 +16,7 @@ Ablauf:
 import argparse
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 import dill
 
 import cv2
@@ -112,6 +112,14 @@ def _load_gray(video_path: Path, window: FrameWindow):
     return cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
 
+def _verse_at(verse_ranges, pos: int):
+    """Liefert die Versnummer, in der die Position *pos* liegt (oder None)."""
+    for ayah, start, end, _text in verse_ranges:
+        if start <= pos < end:
+            return ayah
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Pipeline
 # ---------------------------------------------------------------------------
@@ -196,6 +204,10 @@ def run(
         title_ts = seconds_to_timestamp(title_window.start_sec)
         mapping_lines.append(build_title_line(title_lines, title_ts))
 
+    all_verses: Dict[int, str] = {
+        i + 1: text for i, text in enumerate(numbered_lines)
+    }
+
     verse_number = 1
     for group in groups:
         n = group.circle_count
@@ -207,7 +219,17 @@ def run(
 
     # ------------------------------------------------------------------
     # 4. ALLE Window-Frames einheitlich transkribieren + matchen.
-    #    Jeder Frame erzeugt genau einen Eintrag mit seinem Alignment-Span.
+    #    Die Circle-Detektion (Gruppen) dient als Guard: Der Match-Bereich ist
+    #    nur das lokale Vers-Fenster (kein ganzer Sure-Text → keine falschen
+    #    Positives).
+    #
+    #    Hybrid:
+    #      - Multi-Vers-Gruppen (n>1): gegen die zugewiesenen Verse matchen
+    #        mit fill_gaps=True (die Fenster einer Gruppe rezitieren gemeinsam
+    #        die n Verse — vollständige Abdeckung).
+    #      - Einzel-Vers-Gruppen (n=1): erst rohe Spans gegen [N-1, N+1]
+    #        (Kreise erscheinen oft einen Vers zu früh → Off-by-One-Korrektur),
+    #        dann fill_gaps=True gegen den erkannten Vers.
     # ------------------------------------------------------------------
     if not any(g.verses for g in groups):
         write_mapping(mapping_lines, mapping_path)
@@ -215,9 +237,10 @@ def run(
     whisper_model = load_model(device=whisper_device)
 
     entries: List[Tuple[float, str]] = []
+    chunks_by_verse: Dict[int, list] = {}
+
     for group in groups:
-        id_verse = dict(group.verses)
-        if not id_verse:
+        if not group.verses:
             continue
         all_windows = group.all_windows  # Circle + Sub-Fenster einheitlich
         chunks = transcribe_chunks(
@@ -225,10 +248,45 @@ def run(
             windows=all_windows,
             model=whisper_model,
         )
+        chunks = [c for c in chunks if c.raw_text.strip()]
+
+        if len(group.verses) > 1:
+            id_verse = dict(group.verses)
+            session = run_matching(
+                chunks=chunks,
+                surah=surah,
+                dict_of_verses=id_verse,
+                fill_gaps=True,
+            )
+            for result in session.results:
+                text = _format_span_with_verse_ids(
+                    session, result.span.start, result.span.end
+                )
+                if text.strip():
+                    ts = seconds_to_timestamp(result.chunk.window.start_sec)
+                    entries.append(
+                        (result.chunk.window.start_sec, f"[{ts}] :: {text}")
+                    )
+            continue
+
+        # Einzel-Vers-Gruppe: Off-by-One-Korrektur über rohe Spans
+        first_v = group.verses[0][0]
+        lo = max(1, first_v - 1)
+        hi = min(len(all_verses), first_v + 1)
+        scope = {v: all_verses[v] for v in range(lo, hi + 1) if v in all_verses}
+        s = run_matching(chunks=chunks, surah=surah, dict_of_verses=scope, fill_gaps=False)
+        for result in s.results:
+            verse = _verse_at(s.verse_ranges, result.span.start)
+            if verse is not None:
+                chunks_by_verse.setdefault(verse, []).append(result.chunk)
+
+    # Pass 2 (n=1): pro erkanntem Vers gegen DIESEN Vers, fill_gaps=True
+    for verse, vchunks in chunks_by_verse.items():
         session = run_matching(
-            chunks=chunks,
+            chunks=vchunks,
             surah=surah,
-            dict_of_verses=id_verse,
+            dict_of_verses={verse: all_verses[verse]},
+            fill_gaps=True,
         )
         for result in session.results:
             text = _format_span_with_verse_ids(

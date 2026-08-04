@@ -118,6 +118,111 @@ def _load_gray(video_path: Path, window: FrameWindow):
 
 
 # ---------------------------------------------------------------------------
+# Subwindow-Überlappung: Circle-Frame kürzen, erstes Subwindow zurücksetzen
+# ---------------------------------------------------------------------------
+
+# Satzzeichen, an denen der Circle-Text abgeschnitten wird (inkl. Satzpunkt).
+_CUT_PUNCTUATION: set = set(":;!?,")
+# Wörter, deren Punkt KEIN Satzende markiert (Abkürzungen aus chunked_translation).
+_ABBREV_SINGLE: set = {"etc", "vol", "no", "p"}
+_ABBREV_PREFIXES: tuple = ("i.e", "e.g")
+
+
+def _is_abbreviation_token(token: str) -> bool:
+    """
+    True, wenn der Punkt dieses Tokens Teil einer Abkürzung ist (z.B. 'i.e.', 'etc.').
+
+    Führende Nicht-Buchstaben (z.B. '(' vor '(i.e.') werden ignoriert.
+    """
+    word = token.strip()
+    while word and not word[0].isalpha():
+        word = word[1:]
+    t = word.rstrip(".").lower()
+    if t in _ABBREV_SINGLE:
+        return True
+    return t.startswith(_ABBREV_PREFIXES)
+
+
+def _is_cut_punctuation(text: str, pos: int) -> bool:
+    """
+    True, wenn das Zeichen an *pos* ein Schnitt-Satzzeichen ist.
+
+    Der Punkt (.) zählt nur, wenn er einen Satz beendet und nicht Teil einer
+    Abkürzung ist (i.e., e.g., etc., Vol., No., P.).
+    """
+    ch = text[pos]
+    if ch in _CUT_PUNCTUATION:
+        return True
+    if ch == ".":
+        start = pos
+        while start > 0 and not text[start - 1].isspace():
+            start -= 1
+        end = pos + 1
+        while end < len(text) and not text[end].isspace():
+            end += 1
+        return not _is_abbreviation_token(text[start:end])
+    return False
+
+
+def _find_cut_positions(mapping_text: str, span_start: int):
+    """
+    Findet um *span_start* herum das nächste (vorwärts) und vorherige
+    (rückwärts) Schnitt-Satzzeichen im Mapping-Text.
+
+    Rückgabe: (next_punct_pos, prev_punct_pos) oder None, wenn eines fehlt.
+    """
+    next_punct = None
+    for pos in range(span_start + 1, len(mapping_text)):
+        if _is_cut_punctuation(mapping_text, pos):
+            next_punct = pos
+            break
+    prev_punct = None
+    for pos in range(span_start - 1, -1, -1):
+        if _is_cut_punctuation(mapping_text, pos):
+            prev_punct = pos
+            break
+    if next_punct is None and prev_punct is None:
+        return None
+    return next_punct, prev_punct
+
+
+def _map_mapping_to_content_pos(verse_ranges, mapping_pos: int):
+    """
+    Bildet eine Position im Mapping-Text (verbundene Vers-Texte) auf die
+    Position im Circle-Zeilen-Inhalt ('5: text 6: text') ab.
+
+    Gibt None zurück, wenn die Position nicht abbildbar ist.
+    """
+    offset = 0
+    for ayah, start, end, _text in verse_ranges:
+        if start <= mapping_pos < end:
+            return offset + len(f"{ayah}: ") + (mapping_pos - start)
+        offset += len(f"{ayah}: {_text}") + 1
+    last_end = verse_ranges[-1][2] if verse_ranges else None
+    if last_end is not None and mapping_pos == last_end:
+        return offset
+    return None
+
+
+def _replace_mapping_line(mapping_path: Path, timestamp: str, new_content: str) -> None:
+    """Ersetzt den Inhalt der Mapping-Zeile mit dem angegebenen Timestamp."""
+    lines = mapping_path.read_text(encoding="utf-8").splitlines()
+    replaced = False
+    out = []
+    for line in lines:
+        if line.startswith(f"[{timestamp}]"):
+            out.append(f"[{timestamp}] :: {new_content}")
+            replaced = True
+        else:
+            out.append(line)
+    if not replaced:
+        raise ValueError(
+            f"Timestamp [{timestamp}] nicht in {mapping_path} gefunden."
+        )
+    mapping_path.write_text("\n".join(out) + "\n", encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
 # Pipeline
 # ---------------------------------------------------------------------------
 
@@ -222,10 +327,16 @@ def run(
         numbered_lines = numbered_lines[taken:]
         verse_number += taken
 
-        # end_with_last_verse (Einzel-Kreis): kein neuer Vers im aktuellen
-        # Circle-Window-Frame — der Vers wird stattdessen am nächsten
-        # Window-Frame gerendert (erster Sub-Fenster bzw. nächste Gruppe).
-        if group.end_with_last_verse and group.circle_count == 1:
+        # end_with_last_verse (Einzel-Kreis, nicht letzte Gruppe): kein neuer
+        # Vers im aktuellen Circle-Window-Frame — der Vers wird stattdessen am
+        # nächsten Window-Frame gerendert (erster Sub-Fenster bzw. nächste
+        # Gruppe). Die letzte Gruppe wird ausgenommen (dort existiert kein
+        # sinnvoller Folge-Frame; Vers bleibt am Circle-Frame).
+        if (
+            group.end_with_last_verse
+            and group.circle_count == 1
+            and idx + 1 < len(groups)
+        ):
             if group.sub_windows:
                 frame_start_sec = group.sub_windows[0].start_sec
             elif idx + 1 < len(groups):
@@ -279,6 +390,17 @@ def run(
         if idx + 1 == len(groups) - 1 and not groups[idx + 1].verses:
             all_windows = all_windows + [groups[idx + 1].circle_window]
 
+        # end_with_last_verse-Verschiebung: Der Vers wurde auf den nächsten
+        # Window-Frame verschoben — der Circle-Window selbst wird nicht
+        # transkribiert, sonst entstünde dort ein doppelter/fehlgeleiteter
+        # Sub-Eintrag (die alten Einträge werden durch die neuen überschrieben).
+        if (
+            group.end_with_last_verse
+            and group.circle_count == 1
+            and idx + 1 < len(groups)
+        ):
+            all_windows = list(group.sub_windows)
+
         chunks = transcribe_chunks(
             video_path=audio_path,
             windows=all_windows,
@@ -290,6 +412,41 @@ def run(
             surah=surah,
             dict_of_verses=id_verse,
         )
+
+        # Ausnahme: das erste Subwindow wiederholt Circle-Text. Dann wird der
+        # Circle-Frame bis zum nächsten Satzzeichen gekürzt (statt dass der
+        # Text doppelt vorkommt) und das erste Subwindow springt zum
+        # vorherigen Satzzeichen zurück.
+        if group.sub_windows and session.results:
+            first_sub = next(
+                (r for r in session.results if any(r.chunk.window is w for w in group.sub_windows)),
+                None,
+            )
+            if (
+                first_sub is not None
+                and 0 < first_sub.span.start < len(session.mapping_text)
+            ):
+                cut = _find_cut_positions(session.mapping_text, first_sub.span.start)
+                if cut is not None:
+                    next_punct, prev_punct = cut
+                    if next_punct is not None and ":: " in group.mapping_line:
+                        content = group.mapping_line.split(":: ", 1)[1]
+                        content_pos = _map_mapping_to_content_pos(
+                            session.verse_ranges, next_punct
+                        )
+                        if content_pos is not None and 0 <= content_pos < len(content):
+                            _replace_mapping_line(
+                                mapping_path,
+                                group.mapping_ts,
+                                content[: content_pos + 1],
+                            )
+                    if prev_punct is not None:
+                        first_sub.span.start = prev_punct + 1
+                        while (
+                            first_sub.span.start < len(session.mapping_text)
+                            and session.mapping_text[first_sub.span.start] in ' \t"'
+                        ):
+                            first_sub.span.start += 1
 
         if session.results:
             affected_timestamp = group.mapping_ts

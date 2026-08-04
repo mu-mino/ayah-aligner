@@ -334,6 +334,8 @@ _THEME_STEMS = {
         "radiant", "nobl", "trustworth", "truth", "houri", "salsabil", "kawthar",
         "siddiq", "martyr", "shahid", "good[- ]?deed", "righteous[- ]?deed", "pure",
         "excellent", "grateful", "thankful", "admit",
+        # arabische Glaubensbegriffe (Iman, Shukr, Hidayah, Noor, Rahmah)
+        "iman", "shukr", "hidayah", "noor", "rahmah",
     ],
 }
 
@@ -481,6 +483,36 @@ def annotate_highlights(verse, highlights, apply_regex=True, base_font_size=42):
             if proc.get(i) == "GOD":
                 del proc[i]
 
+    # Step 3d: "fear"-Woerter (Taqwa) nur CONSTRUCTIVE, wenn im SELBEN SATZ ein
+    # GOD-Token vorkommt ("fear Him", "fears Allah", "feared before his Lord").
+    # Furcht ohne Gottesbezug (z.B. Terror der Stunde, Sure 79:8) ist kein
+    # konstruktives Konzept und wird entfernt - auch wenn der Vers woanders
+    # einen Gott-Bezug enthaelt.
+    FEAR_TAQWA = {"fear", "fears", "feared", "fearing", "fearful"}
+    _ABBR_END = {"ie", "eg", "etc", "vs", "cf", "al", "no", "st", "p", "v",
+                 "swt", "saw", "pbuh", "as", "ra", "sw"}
+    sent_ends = []
+    for i, token in enumerate(tokens):
+        t = token.strip("\"'").rstrip(")]}")
+        if not t:
+            continue
+        if t[-1] not in ".!?;:":
+            continue
+        if re.sub(r"[^\w]", "", t[:-1]).lower() in _ABBR_END:
+            continue
+        sent_ends.append(i)
+    for i, token in enumerate(tokens):
+        if normalize(token).lower() not in FEAR_TAQWA:
+            continue
+        if proc.get(i) != "CONSTRUCTIVE":
+            continue
+        prev = [e for e in sent_ends if e < i]
+        start = prev[-1] + 1 if prev else 0
+        nxt = [e for e in sent_ends if e >= i]
+        end = nxt[0] if nxt else n - 1
+        if not any(proc.get(j) == "GOD" for j in range(start, end + 1)):
+            del proc[i]
+
     # Step 4: track parentheses depth
     paren_depth = [0] * n
     depth = 0
@@ -502,6 +534,21 @@ def annotate_highlights(verse, highlights, apply_regex=True, base_font_size=42):
         hl = proc.get(i)
         is_first = i == 0 or paren_depth[i - 1] == 0
         is_last = i + 1 >= n or paren_depth[i + 1] == 0
+
+        # Mid-Token "(": Klammer klebt ohne Leerzeichen am Wort an
+        # (z.B. Sure 14:1 "Alif-Lam-Ra.(These ..."). Der Teil VOR der Klammer
+        # ist NICHT in Klammern und bleibt normal; nur "(..." oeffnet die
+        # Klammer-Darstellung (klein+grau).
+        cut = token.find("(")
+        if (
+            hl is None
+            and cut > 0
+            and (i == 0 or paren_depth[i - 1] == 0)
+            and ")" not in token
+        ):
+            ass_lines.append(token[:cut])
+            ass_lines.append("{" + small_fs + r"\c&HAAAAAA&}" + token[cut:])
+            continue
 
         if not in_parens and not hl:
             ass_lines.append(token)

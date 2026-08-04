@@ -207,6 +207,35 @@ RELATIVE_PRONOUNS = {"who", "whom", "whose", "which", "what"}
 
 
 # ---------------------------------------------------------------------------
+# Propheten- und Engel-Namen -> CONSTRUCTIVE (blau).
+# Schreibvarianten exakt wie im Korpus (chunked_translation) vorkommend.
+# Nur GROSS geschrieben (Eigenname) - so wird die einzige Kollision mit einem
+# gewoehnlichen Wort ("lot" = Anteil/Glueck, "aught to their lot") vermieden.
+# "Munkar" ist im Korpus NUR "Al-Munkar" = boese Taten (DESTRUCTIVE) und wird
+# deshalb NICHT als Engelname gefuehrt.
+# ---------------------------------------------------------------------------
+PROPHET_NAMES = {
+    "muhammad", "muhammed", "ahmed", "ahmad",
+    "adam", "noah", "nooh", "idris", "enoch", "hud",
+    "salih", "saleh", "ibrahim", "abraham",
+    "lot", "lout", "ismail", "ishmael", "isaac", "jacob", "yaqoob",
+    "joseph", "yoosuf", "yusuf", "job", "ayub",
+    "shuaib", "moses", "moosa", "musa", "aaron", "haroon",
+    "david", "dawood", "dawud", "solomon", "sulaiman",
+    "elias", "elisha", "al-yasa", "yasa", "dhul-kifl",
+    "yunus", "yoonus", "jonah", "zakariya", "zachariah", "zachariya",
+    "john", "yahya", "iesa", "jesus", "imran", "luqman", "uzair", "ezra",
+}
+
+ANGEL_NAMES = {
+    "gabriel", "jibrael", "jibreel",
+    "mikael", "michael", "mikail",
+    "israfil", "sarafil", "malik",
+    "kiraman", "katibeen",
+}
+
+
+# ---------------------------------------------------------------------------
 # WordClassifier: if-else-Kaskade (jeder Fall einzeln) + Regex + Zusatzwörter
 # ---------------------------------------------------------------------------
 
@@ -234,10 +263,20 @@ class WordClassifier:
     # ------------------------------------------------------------------
     # If-else-Kaskade: jeder einzelne Fall, basierend auf Korpus-Kontexten
     # ------------------------------------------------------------------
-    def _special_case(self, clean: str):
+    def _special_case(self, token: str):
+        clean = re.sub(r"[^\w]", "", token).lower()
+
         # --- GOD: eindeutig göttlich (aus Embedding-Kandidaten verifiziert) ---
         if clean in {"creator", "divine", "originator", "omnipotent"}:
             return "GOD"
+
+        # --- Propheten-/Engel-Namen: gross geschrieben = Eigenname -> blau.
+        # "angel(s)" als allgemeines Wort bleibt immer blau. ---
+        if clean in PROPHET_NAMES or clean in ANGEL_NAMES:
+            if token and token[0].isupper():
+                return "CONSTRUCTIVE"
+        if clean in {"angel", "angels"}:
+            return "CONSTRUCTIVE"
 
         # --- DESTRUCTIVE: neutrale Verben, die Embedding/Regex nicht treffen ---
         if clean in {
@@ -294,7 +333,7 @@ class WordClassifier:
                 return False
             return True
 
-        special = self._special_case(clean)
+        special = self._special_case(token)
         if special is None:
             return True  # global nie markieren
         if special is not self._UNHANDLED:
@@ -321,7 +360,7 @@ class WordClassifier:
         if clean in FUNCTION_WORDS:
             return None
 
-        special = self._special_case(clean)
+        special = self._special_case(token)
         if special is not self._UNHANDLED:
             return special
 

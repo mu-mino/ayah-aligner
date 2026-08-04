@@ -483,6 +483,26 @@ def annotate_highlights(verse, highlights, apply_regex=True, base_font_size=42):
             if proc.get(i) == "GOD":
                 del proc[i]
 
+    # Step 3e: Goettliche Attribut-Compounds (rein REGEX, ohne KI/Embedding).
+    #   "Most <Attribut>"            -> "Most Merciful", "Most High"
+    #   "All-<Attribut>"             -> "All-Able", "All-Mighty", "All-Knower"
+    #   "All- <Attribut>"            -> Umbruch "All-" + "Mighty"
+    #   "Oft-/Ever-/Self-<Attribut>" -> "Oft-Forgiving", "Ever-Living",
+    #                                   "Ever-AllKnower", "Self-Sufficient"
+    # Diese Woerter sind NAMEN/Attribute Allahs und gehoeren ausnahmslos zu GOD.
+    _COMPOUND_ATTR = re.compile(r"^(?:All|Oft|Ever|Self)-[A-Z]")
+    for i, token in enumerate(tokens):
+        # "Most" auch bei angehaengter Klammer/Satzzeichen: "(Most", "Most."
+        _most = token.lstrip("([\"'").rstrip(".,;:!?)]}\"'")
+        if _most == "Most" and i + 1 < n and tokens[i + 1] and tokens[i + 1][0].isupper():
+            proc[i] = "GOD"
+            proc[i + 1] = "GOD"
+        elif token == "All-" and i + 1 < n and tokens[i + 1] and tokens[i + 1][0].isupper():
+            proc[i] = "GOD"
+            proc[i + 1] = "GOD"
+        elif _COMPOUND_ATTR.match(token):
+            proc[i] = "GOD"
+
     # Step 3d: "fear"-Woerter (Taqwa) nur CONSTRUCTIVE, wenn im SELBEN SATZ ein
     # GOD-Token vorkommt ("fear Him", "fears Allah", "feared before his Lord").
     # Furcht ohne Gottesbezug (z.B. Terror der Stunde, Sure 79:8) ist kein

@@ -503,6 +503,25 @@ def annotate_highlights(verse, highlights, apply_regex=True, base_font_size=42):
         elif _COMPOUND_ATTR.match(token):
             proc[i] = "GOD"
 
+    # Step 3f: Grossgeschriebene goettliche Pronomen (He/Him/His) MITTEN im Satz
+    # sind ohne grammatikalischen Anlass gross geschrieben -> Allah-Referenz -> GOD.
+    # Satzanfaenge (grammatikalische Grossschreibung, z.B. "He (Muhammad SAW) said")
+    # und kleingeschriebene Pronomen ("peace be upon him") werden NICHT markiert.
+    DIVINE_PRONOUNS = {"he", "him", "his"}
+    for i, token in enumerate(tokens):
+        clean = normalize(token).lower()
+        if clean not in DIVINE_PRONOUNS:
+            continue
+        first_alpha = next((ch for ch in token if ch.isalpha()), "")
+        if not first_alpha.isupper():
+            continue
+        if i == 0:
+            continue
+        prev = tokens[i - 1].rstrip(")]}\'\"")
+        if prev and prev[-1] in ".!?":
+            continue
+        proc[i] = "GOD"
+
     # Step 3d: "fear"-Woerter (Taqwa) nur CONSTRUCTIVE, wenn im SELBEN SATZ ein
     # GOD-Token vorkommt ("fear Him", "fears Allah", "feared before his Lord").
     # Furcht ohne Gottesbezug (z.B. Terror der Stunde, Sure 79:8) ist kein

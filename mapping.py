@@ -14,6 +14,7 @@ Ablauf:
 """
 
 import argparse
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -196,6 +197,72 @@ def _open_depth(content: str) -> int:
     return depth
 
 
+# Satzzeichen, mit denen KEINE Mapping-Zeile anfangen darf (Fragment-Anfang).
+_FRAGMENT_PUNCT = ".,!?;:…)-]}\"'"
+
+
+def _is_verse_start(text: str) -> bool:
+    """True, wenn text mit einer Versnummer beginnt ('N:' / 'N.')."""
+    return bool(re.match(r"^\d+[:.]", text))
+
+
+def _is_fragment_start(text: str) -> bool:
+    """True, wenn text mit einem Fragment-Satzzeichen beginnt.
+
+    Eine Mapping-Zeile darf nicht mit einem Satzzeichen ('.', ',', '-', '!',
+    '?' usw.) anfangen — das gehoert an das Ende der Vorzeile. Grossbuchstaben
+    (neuer Satz / Eigenname), Versnummern und '(' (Klammer-Logik) sind saubere
+    Zeilenanfaenge.
+    """
+    return bool(text) and text[0] in _FRAGMENT_PUNCT
+
+
+def _split_at_verse_marker(text: str):
+    """Teilt text am ersten Vers-Marker (' N:' / ' N.').
+
+    Rückgabe: (vor_marker, marker_teil) — oder (None, text), wenn kein
+    Vers-Marker enthalten ist. Damit bleibt eine Versnummer bei einem
+    Fragment-Anhang auf ihrer eigenen Zeile.
+    """
+    m = re.search(r"\s(\d+)[:.]", text)
+    if not m:
+        return None, text
+    pos = m.start() + 1
+    return text[:pos], text[pos:]
+
+
+def _snap_forward(text: str, pos: int) -> int:
+    """Rückt pos vor, bis ein sauberer Wortanfang erreicht ist.
+
+    Überspringt führende Leerzeichen, Satzzeichen und eine komplette
+    führende Klammer (z.B. '!" (It will be said): "Had you not sworn...' →
+    Start bei 'Had'). Damit beginnt die Fortsetzung eines Grenz-Fensters
+    nicht mit einem Satzzeichen oder '('.
+    """
+    while pos < len(text):
+        ch = text[pos]
+        if ch in " \t":
+            pos += 1
+            continue
+        if ch in _FRAGMENT_PUNCT:
+            pos += 1
+            continue
+        if ch == "(":
+            depth = 0
+            while pos < len(text):
+                if text[pos] == "(":
+                    depth += 1
+                elif text[pos] == ")":
+                    depth -= 1
+                    if depth == 0:
+                        pos += 1
+                        break
+                pos += 1
+            continue
+        break
+    return pos
+
+
 def _assemble_mapping_lines(entries) -> list:
     """Baut Mapping-Zeilen aus sortierten '[HH:MM:SS] :: text'-Eintraegen.
 
@@ -212,10 +279,31 @@ def _assemble_mapping_lines(entries) -> list:
             _group = _balanced_paren_group(_content, 0)
             if not _group.endswith(")") or not lines:
                 break
+            # Nur anhaengen, wenn danach ein Vers-Marker folgt (Kommentar vor
+            # einer neuen Versnummer). Sonst ist die Klammer Inhalt eines
+            # Grenz-Fensters (z.B. '(It will be said): "Had you not sworn...')
+            # und bleibt auf ihrer eigenen Zeile.
+            remainder = _content[len(_group):]
+            if _split_at_verse_marker(remainder)[0] is None:
+                break
             lines[-1] += _group
-            _content = _content[len(_group):].lstrip()
+            _content = remainder.lstrip()
         if _content:
             lines.append(f"{_ts} :: {_content}")
+
+    # Zeilen mit demselben Timestamp zu EINER Zeile zusammenführen: Ein
+    # Grenz-Fenster rezitiert das Vers-Ende UND den Vers-Anfang — das muss in
+    # einer Mapping-Zeile erscheinen, nicht als zwei Einträge. (Vor den
+    # Klammer-/Fragment-Pässen, damit deren Regeln den Grenz-Inhalt nicht in
+    # die vorherige Zeile ziehen.)
+    merged = []
+    for ln in lines:
+        ts = ln.split(" :: ", 1)[0]
+        if merged and merged[-1].split(" :: ", 1)[0] == ts:
+            merged[-1] += " " + ln.split(" :: ", 1)[1].lstrip()
+        else:
+            merged.append(ln)
+    lines = merged
 
     i = 0
     while i < len(lines) - 1:
@@ -247,17 +335,62 @@ def _assemble_mapping_lines(entries) -> list:
             continue
         i += 1
 
-    # Zeilen mit demselben Timestamp zu EINER Zeile zusammenführen: Ein
-    # Grenz-Fenster rezitiert das Vers-Ende UND den Vers-Anfang — das muss in
-    # einer Mapping-Zeile erscheinen, nicht als zwei Einträge.
-    merged = []
-    for ln in lines:
-        ts = ln.split(" :: ", 1)[0]
-        if merged and merged[-1].split(" :: ", 1)[0] == ts:
-            merged[-1] += " " + ln.split(" :: ", 1)[1].lstrip()
+    # ------------------------------------------------------------------
+    # Fragmente: Keine Zeile darf mit einem Satzzeichen anfangen oder ein
+    # abgeschnittenes Bindestrich-Wort enthalten ('All-' + 'Mighty' ->
+    # 'All-Mighty'). Fragmente werden — wie Klammern — an die Vorzeile
+    # angehaengt.
+    #
+    # AUSNAHME Grenz-Fenster: Steht vor einem Vers-Marker echter Text
+    # (z.B. 'Had you not sworn ... Hereafter). 45: And you dwelt in'), ist
+    # das der Inhalt eines Grenz-Fensters und bleibt auf seiner Zeile —
+    # sonst wuerde der Vers-Schwanz des vorherigen Verses an den früheren
+    # Timestamp gezogen.
+    # ------------------------------------------------------------------
+    i = 0
+    while i < len(lines):
+        _ts, content = lines[i].split(" :: ", 1)
+        stripped = content.lstrip()
+        if not stripped:
+            del lines[i]
+            continue
+        prev_hyphen = i > 0 and lines[i - 1].rstrip().endswith("-")
+        if i == 0 or (not _is_fragment_start(stripped) and not prev_hyphen):
+            i += 1
+            continue
+
+        prev = lines[i - 1].rstrip()
+        before, after = _split_at_verse_marker(stripped)
+        if before is None:
+            joiner = "" if prev_hyphen else "" if stripped[0] in _FRAGMENT_PUNCT else " "
+            lines[i - 1] = prev + joiner + stripped
+            del lines[i]
         else:
-            merged.append(ln)
-    return merged
+            fragment = before.rstrip()
+            if not prev_hyphen and any(ch.isalnum() for ch in fragment):
+                # Grenz-Fenster-Inhalt: NUR das führende Satzzeichen-Zeichen
+                # wandert an die Vorzeile (z.B. '.' in '. Verily ... 23: ...'),
+                # der Rest bleibt auf der Grenz-Zeile — sonst würde der
+                # Vers-Schwanz an den früheren Timestamp gezogen.
+                k = 0
+                while k < len(stripped) and stripped[k] in _FRAGMENT_PUNCT:
+                    k += 1
+                if k == 0:
+                    i += 1
+                    continue
+                lines[i - 1] = prev + stripped[:k]
+                rest = stripped[k:].lstrip()
+                if rest:
+                    lines[i] = f"{_ts} :: {rest}"
+                else:
+                    del lines[i]
+                continue
+            joiner = "" if prev_hyphen else "" if fragment and fragment[0] in _FRAGMENT_PUNCT else " "
+            lines[i - 1] = prev + joiner + fragment
+            lines[i] = f"{_ts} :: {after.lstrip()}"
+            i += 1
+
+    return lines
 
 
 def run(
@@ -383,6 +516,7 @@ def run(
 
     entries: List[Tuple[float, str]] = []
     verse_spans: Dict[int, list] = {}
+    boundary_windows: set = set()
 
     for group in groups:
         if not group.verses:
@@ -424,9 +558,14 @@ def run(
         scope = {v: all_verses[v] for v in range(lo, hi + 1) if v in all_verses}
         s = run_matching(chunks=chunks, surah=surah, dict_of_verses=scope, fill_gaps=False)
         for result in s.results:
-            for verse in _verses_in_span(
+            verses_in_span = _verses_in_span(
                 s.verse_ranges, result.span.start, result.span.end
-            ):
+            )
+            # Ein Fenster, dessen Audio ZWEI Verse rezitiert (Grenz-Fenster),
+            # ist der Anker für den Vers-Schwanz des vorherigen Verses.
+            if len(verses_in_span) > 1:
+                boundary_windows.add(id(result.chunk.window))
+            for verse in verses_in_span:
                 if verse in multi_verse_verses:
                     continue
                 vs, ve = _verse_abs_range(s.verse_ranges, verse)
@@ -439,15 +578,30 @@ def run(
 
     # Vers-Abdeckung (n=1): Lücken füllen UND Überlappungen beschneiden
     # (vorn/mitte/hinten — Whisper ist nie perfekt), ein Eintrag pro Fenster.
+    #
+    # Lücken zwischen zwei Fenstern gehören zum GRENZ-Fenster, falls das
+    # spätere Fenster eines ist: Das Grenz-Fenster rezitiert das Vers-Ende
+    # des vorherigen Verses (z.B. 'Had you not sworn...'), das sonst durch
+    # Vorwärts-Erweiterung am früheren Timestamp erscheinen würde. Gehört
+    # das spätere Fenster NICHT zu einem Grenz-Fenster, übernimmt das
+    # frühere Fenster die Lücke (bisheriges Verhalten).
+    #
+    # Der Split-Punkt am Grenz-Fenster wird auf einen sauberen Wortanfang
+    # gerückt, damit die Fortsetzung nicht mit Satzzeichen/Klammer beginnt.
     for verse, spans in verse_spans.items():
         spans.sort(key=lambda x: x[1])
         if spans and spans[0][1] > 0:
             w, _st, en = spans[0]
             spans[0] = (w, 0, en)
         for i in range(1, len(spans)):
-            prev_w, prev_st, _prev_en = spans[i - 1]
-            _cur_w, cur_st, _cur_en = spans[i]
-            spans[i - 1] = (prev_w, prev_st, cur_st)
+            prev_w, prev_st, prev_en = spans[i - 1]
+            cur_w, cur_st, cur_en = spans[i]
+            if id(cur_w) in boundary_windows:
+                snap = _snap_forward(all_verses[verse], prev_en)
+                spans[i] = (cur_w, snap, cur_en)
+                spans[i - 1] = (prev_w, prev_st, snap)
+            else:
+                spans[i - 1] = (prev_w, prev_st, cur_st)
         if spans and spans[-1][2] < len(all_verses[verse]):
             w, st, _en = spans[-1]
             spans[-1] = (w, st, len(all_verses[verse]))

@@ -26,6 +26,7 @@ ENABLE_TMP_WINDOW_FRAMES: bool = True
 
 from modules.videowindow import extract_windows, FrameWindow, run_ffprobe
 from modules.recognizecircle import detect_markers_from_gray
+from modules.circle_overrides import apply_circle_override
 from modules.circlelog import (
     parse_text_file,
     build_title_line,
@@ -448,6 +449,8 @@ def run(
                 gray,
             )
         n, end_with_last_verse = detect_markers_from_gray(gray)
+        # Kuenstliche Kreis-Korrekturen (bekannte Fehl-/Ueber-Erkennungen).
+        n = apply_circle_override(surah, window, n)
         if n > 0:
             current_group = WindowGroup(
                 circle_window=window,

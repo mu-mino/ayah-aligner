@@ -59,4 +59,11 @@ def apply_circle_override(surah: int, window, detected_n: int) -> int:
     if surah == 89 and 266.0 <= start <= 287.6:
         n = 2
 
+    # ------------------------------------------------------------------
+    # Sure 76 (Al-Insan): w18 (320.8-337.2s, n=1 -> V21) - Vers fehlt.
+    # Verifiziert: Override liefert alle 31 Verse ohne End-Verlust.
+    # ------------------------------------------------------------------
+    if surah == 76 and 320.8 <= start <= 337.2:
+        n = 2
+
     return n

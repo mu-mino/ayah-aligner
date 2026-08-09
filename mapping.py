@@ -560,6 +560,7 @@ def run(
         hi = min(len(all_verses), first_v + 1)
         scope = {v: all_verses[v] for v in range(lo, hi + 1) if v in all_verses}
         s = run_matching(chunks=chunks, surah=surah, dict_of_verses=scope, fill_gaps=False)
+        _boundary_to_next = False
         for result in s.results:
             verses_in_span = _verses_in_span(
                 s.verse_ranges, result.span.start, result.span.end
@@ -568,6 +569,8 @@ def run(
             # ist der Anker für den Vers-Schwanz des vorherigen Verses.
             if len(verses_in_span) > 1:
                 boundary_windows.add(id(result.chunk.window))
+            if first_v + 1 in verses_in_span:
+                _boundary_to_next = True
             for verse in verses_in_span:
                 if verse in multi_verse_verses:
                     continue
@@ -578,6 +581,17 @@ def run(
                     verse_spans.setdefault(verse, []).append(
                         (result.chunk.window, istart, iend)
                     )
+        # n=1-Grenz-Gruppe: Der Span faellt in N+1 (Rezitation deckt den
+        # Schwanz von N + den Anfang von N+1 ab), aber N selbst bekommt
+        # keinen Span -> N wird vollstaendig abgedeckt, sonst fehlt der Vers.
+        if (
+            _boundary_to_next
+            and first_v not in verse_spans
+            and first_v + 1 <= len(all_verses)
+        ):
+            verse_spans.setdefault(first_v, []).append(
+                (group.circle_window, 0, len(all_verses[first_v]))
+            )
 
     # Vers-Abdeckung (n=1): Lücken füllen UND Überlappungen beschneiden
     # (vorn/mitte/hinten — Whisper ist nie perfekt), ein Eintrag pro Fenster.

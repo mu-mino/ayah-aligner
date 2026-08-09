@@ -66,4 +66,12 @@ def apply_circle_override(surah: int, window, detected_n: int) -> int:
     if surah == 76 and 320.8 <= start <= 337.2:
         n = 2
 
+    # ------------------------------------------------------------------
+    # Sure 52 (At-Tur): letztes Fenster 605.2-624s (n=2 -> V47-48) zeigt
+    # nur 2 Kreise, aber w32 rezitiert V49 ("ومن الليل فسبحه...") -> V49
+    # fehlt (48 Kreise fuer 49 Verse). n+=1 -> n=3.
+    # ------------------------------------------------------------------
+    if surah == 52 and 605.2 <= start <= 624.0:
+        n = 3
+
     return n

@@ -593,6 +593,19 @@ def run(
                 (group.circle_window, 0, len(all_verses[first_v]))
             )
 
+    # Nachbearbeitung: n=1-Gruppen-Verse, die gar keinen Span bekamen
+    # (z.B. der LETZTE Vers einer Sure — dort existiert kein N+1 und der
+    # Span faellt in N-1), werden vollstaendig aus dem Gruppen-Fenster
+    # abgedeckt. Sonst fehlt der Vers komplett im Mapping.
+    for group in groups:
+        if len(group.verses) != 1:
+            continue
+        verse = group.verses[0][0]
+        if verse not in verse_spans:
+            verse_spans.setdefault(verse, []).append(
+                (group.circle_window, 0, len(all_verses[verse]))
+            )
+
     # Vers-Abdeckung (n=1): Lücken füllen UND Überlappungen beschneiden
     # (vorn/mitte/hinten — Whisper ist nie perfekt), ein Eintrag pro Fenster.
     #

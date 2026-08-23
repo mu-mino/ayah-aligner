@@ -100,6 +100,23 @@ class WindowGroup:
 # ---------------------------------------------------------------------------
 
 
+def _marker_positions(gray):
+    """Liefert die sortierten X-Positionen der erkannten Ring-Marker."""
+    from modules.recognizecircle import (
+        _threshold_binary,
+        _find_ring_candidates,
+        _get_empirical_bounds,
+    )
+    binary = _threshold_binary(gray)
+    candidates, _ = _find_ring_candidates(binary, _get_empirical_bounds())
+    return sorted(c.center[0] for c in candidates)
+
+
+def _markers_close(a, b, tol: float = 1.0) -> bool:
+    """True, wenn beide Marker-Positionen (bei Toleranz) identisch sind."""
+    return len(a) == len(b) and all(abs(x - y) <= tol for x, y in zip(a, b))
+
+
 def _load_gray(video_path: Path, window: FrameWindow):
     """Lädt den mittleren Frame eines FrameWindow als Graustufenbild."""
     info = run_ffprobe(video_path)
@@ -436,6 +453,7 @@ def run(
         frames_dir.mkdir(parents=True, exist_ok=True)
 
     iter_windows = windows if title_window is None else windows[1:]
+    _prev_marker_pos: Optional[list] = None
     for i, window in enumerate(iter_windows):
         gray = _load_gray(video_path, window)
         if gray is None:
@@ -451,7 +469,19 @@ def run(
         n, end_with_last_verse = detect_markers_from_gray(gray)
         # Kuenstliche Kreis-Korrekturen (bekannte Fehl-/Ueber-Erkennungen).
         n = apply_circle_override(surah, window, n)
+        # Dedupe gleicher Vers-Marker ueber Fenstergrenzen (Sure 7): Ein
+        # Kreis-Fenster mit exakt denselben Marker-Positionen wie das
+        # vorherige Kreis-Fenster ist eine Continuation (derselbe Vers wird
+        # weiter rezitiert, der Marker bleibt sichtbar) -> n=0 (Sub-Window).
+        marker_pos = _marker_positions(gray) if n > 0 else None
+        if (
+            n > 0
+            and _prev_marker_pos is not None
+            and _markers_close(marker_pos, _prev_marker_pos)
+        ):
+            n = 0
         if n > 0:
+            _prev_marker_pos = marker_pos
             current_group = WindowGroup(
                 circle_window=window,
                 circle_count=n,
@@ -605,6 +635,17 @@ def run(
             verse_spans.setdefault(verse, []).append(
                 (group.circle_window, 0, len(all_verses[verse]))
             )
+
+    # Verse, die gar keinen Span und keine Gruppe bekamen (z.B. durch die
+    # Dedupe leicht unterzaehlt: 205 statt 206 Kreise) -> ans letzte
+    # Gruppen-Fenster haengen, damit nichts fehlt.
+    if groups:
+        last_win = groups[-1].circle_window
+        for verse in range(1, len(all_verses) + 1):
+            if verse not in verse_spans:
+                verse_spans.setdefault(verse, []).append(
+                    (last_win, 0, len(all_verses[verse]))
+                )
 
     # Vers-Abdeckung (n=1): Lücken füllen UND Überlappungen beschneiden
     # (vorn/mitte/hinten — Whisper ist nie perfekt), ein Eintrag pro Fenster.

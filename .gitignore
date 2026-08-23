@@ -1,7 +1,6 @@
 symanto-model/
 qwen_batch_req.py
 tmp/
-tests/
 .*
 temp*
 # Byte-compiled / optimized / DLL files
@@ -226,3 +225,33 @@ cloud/
 # Google Drive API credentials
 credentials.json
 token.json
+
+
+# ---- Generierte Daten & Artefakte (nicht im Repo) ----
+data/
+output/ass/
+output/final/
+output/finals
+finals/
+*.mp4
+*.flac
+verses.db
+verses.db.bak
+verses_sorted.sqlite3
+verses.pdf
+analysis.pdf
+nohup.out
+bu/
+module.mds/
+other_tests/
+bin/
+.ipynb_checkpoints/
+
+# ---- Lokale Tools (nicht im Remote) ----
+upload_all.py
+upload_video.py
+modal_runner.py
+build_semantic_highlights.py
+scripts/complete_pipeline.sh
+scripts/pipeline_complete.sh
+scripts/start_pipeline.sh

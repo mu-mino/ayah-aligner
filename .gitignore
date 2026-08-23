@@ -222,3 +222,7 @@ __marimo__/
 .streamlit/secrets.toml
 
 cloud/
+
+# Google Drive API credentials
+credentials.json
+token.json

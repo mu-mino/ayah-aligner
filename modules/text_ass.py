@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import json
+import os
 import sys
 import re
 import subprocess
@@ -49,12 +50,87 @@ TS_RE = re.compile(
     r"^\[(?:(?P<h>\d{2}):)?(?P<m>\d{2}):(?P<s>\d{2})\]\s*::\s*(?P<txt>.*)\s*$"
     r"|^\[(?P<m2>\d{2}):(?P<s2>\d{2})\]\s*::\s*(?P<txt2>.*)\s*$"
 )
-COLOR_MAP = {
+# Kategorie -> Name des Export-Statements (Env-Var) fuer die ASS-Farbe.
+# Werte werden als #RRGGBB gelesen und in das ASS-BGR-Format (&HBBGGRR&)
+# konvertiert. Nicht gesetzte Kategorien behalten ihren Default.
+ENV_COLOR_MAP = {
+    "GOD": "GOTT",
+    "CONSTRUCTIVE": "KONSTRUKTIV",
+    "DESTRUCTIVE": "DESTRUKTIV",
+}
+
+DEFAULT_COLOR_MAP = {
     "GOD": "&H75DFFA&",  # Majestätisches Gelbgold
     "DESTRUCTIVE": "&H6212B2&",  # Alarmierendes Hellrot
     "CONSTRUCTIVE": "&H803500&",  # Blau
     "NONE": "&H00FFFFFF",
 }
+
+
+def hex_to_ass_bgr(hex_color: str) -> str:
+    """Konvertiert #RRGGBB (oder RRGGBB) in das ASS-BGR-Format &HBBGGRR&."""
+    cleaned = (hex_color or "").strip().lstrip("#")
+    if len(cleaned) != 6 or not all(c in "0123456789abcdefABCDEF" for c in cleaned):
+        raise ValueError(f"Ungültige Hex-Farbe: {hex_color!r} (erwartet #RRGGBB)")
+    r = int(cleaned[0:2], 16)
+    g = int(cleaned[2:4], 16)
+    b = int(cleaned[4:6], 16)
+    return f"&H{b:02X}{g:02X}{r:02X}&"
+
+
+def resolve_color_map(env: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+    """Baut die COLOR_MAP mit Env-Var-Overrides (gross- oder kleingeschrieben)."""
+    env = os.environ if env is None else env
+    result = dict(DEFAULT_COLOR_MAP)
+    for category, env_name in ENV_COLOR_MAP.items():
+        value = env.get(env_name) or env.get(env_name.lower())
+        if value:
+            result[category] = hex_to_ass_bgr(value)
+    return result
+
+
+def resolve_sub_bg(env: Optional[Dict[str, str]] = None):
+    """Liest SUB_BG_ACTIVE / SUB_BG_COLOR aus der Umgebung.
+
+    Aktiv (SUB_BG_ACTIVE=1/true) legt hinter dem ASS-Text eine Box an:
+      BorderStyle=3 (opaque box). Die Farbe kommt aus SUB_BG_COLOR
+      (#RRGGBB -> &HBBGGRR&); Default ist Schwarz (&H000000&).
+
+    Rueckgabe: (border_style, outline_colour, back_colour) oder None.
+    Bei BorderStyle=3 zeichnet libass die Box aus der OutlineColour.
+    BackColour wird parallel gesetzt, damit kein anderer Renderer
+    die Box aus der BackColour zeichnet.
+    """
+    env = os.environ if env is None else env
+    active = str(env.get("SUB_BG_ACTIVE", "")).strip().lower()
+    if active not in ("1", "true", "yes", "on"):
+        return None
+    color = env.get("SUB_BG_COLOR") or env.get("sub_bg_color")
+    if color:
+        ass_col = hex_to_ass_bgr(color)
+    else:
+        ass_col = "&H000000&"
+    return "3", ass_col, ass_col
+
+
+def resolve_font_color(env: Optional[Dict[str, str]] = None):
+    """Liest FONT_COLOR_ACTIVE / FONT_COLOR aus der Umgebung.
+
+    Aktiv (FONT_COLOR_ACTIVE=1/true) ueberschreibt die Textfarbe (PrimaryColour)
+    der ASS. Die Farbe kommt aus FONT_COLOR (#RRGGBB -> &HBBGGRR&);
+    Default ist Schwarz (&H000000&). Rueckgabe: ass_farbe oder None wenn inaktiv.
+    """
+    env = os.environ if env is None else env
+    active = str(env.get("FONT_COLOR_ACTIVE", "")).strip().lower()
+    if active not in ("1", "true", "yes", "on"):
+        return None
+    color = env.get("FONT_COLOR") or env.get("font_color")
+    if color:
+        return hex_to_ass_bgr(color)
+    return "&H000000&"
+
+
+COLOR_MAP = resolve_color_map()
 
 
 @dataclass
@@ -176,6 +252,105 @@ def wrap_ass_text(text: str, video_width: int, font_size: int) -> str:
     return "\n".join(wrapped_lines)
 
 
+# Satzzeichen, mit denen KEIN ASS-Segment anfangen darf (fragment), und
+# Elemente, die beim 5-Zeilen-Split nicht getrennt werden duerfen.
+_FRAGMENT_PUNCT = ".,!?;:…)-]}\"'"
+
+
+def _paren_depth_at_boundaries(lines: List[str]) -> List[int]:
+    """Kumulative Klammer-Tiefe am Ende jeder visuellen Zeile (Tags gestrippt)."""
+    depths: List[int] = []
+    depth = 0
+    for line in lines:
+        clean = re.sub(r"\{[^}]*\}", "", line)
+        depth += clean.count("(")
+        depth -= clean.count(")")
+        depths.append(depth)
+    return depths
+
+
+def _is_safe_cut(lines: List[str], depths: List[int], k: int) -> bool:
+    """True, wenn ein Segment-Schnitt NACH Zeile k (Index) sicher ist.
+
+    Sicher heisst: es wird kein Klammerblock getrennt, kein Bindestrich-Glied,
+    keine verwaiste Versnummer, und die naechste Zeile beginnt nicht mit einem
+    Satzzeichen-Fragment.
+    """
+    if k < 0 or k >= len(lines) - 1:
+        return False
+    if depths[k] > 0:
+        return False
+    prev = re.sub(r"\{[^}]*\}", "", lines[k]).rstrip()
+    nxt = re.sub(r"\{[^}]*\}", "", lines[k + 1]).lstrip()
+    if prev.endswith("-"):
+        return False
+    if re.search(r"\d+:\s*$", prev):
+        return False
+    if nxt and nxt[0] in _FRAGMENT_PUNCT:
+        return False
+    return True
+
+
+def _split_wrapped_lines(lines: List[str], max_lines: int) -> List[str]:
+    """Splittet gewrappte visuelle Zeilen in Segmente von <= max_lines Zeilen.
+
+    Es wird NIE an einer offenen Klammer, einem Bindestrich-Glied, einer
+    einsamen Versnummer oder vor einem Satzzeichen-Fragment geschnitten.
+    Eine Klammer, die groesser als max_lines Zeilen ist, bleibt komplett
+    zusammen (ihre Sonderformatierung muss erhalten bleiben).
+    """
+    if len(lines) <= max_lines:
+        return ["\n".join(lines)]
+
+    depths = _paren_depth_at_boundaries(lines)
+
+    # Gibt es eine Klammer, die ueber max_lines Zeilen spannt? Dann bleibt
+    # der gesamte Klammer-Block (inkl. oeffnender Zeile) als ein Segment.
+    for i, d in enumerate(depths):
+        if d > 0:
+            # Finde das Ende dieses Klammer-Blocks
+            end = i
+            while end < len(depths) and depths[end] > 0:
+                end += 1
+            if end - i >= max_lines:
+                # gesamter Block als ein Segment
+                block_end = end
+                block_lines = lines[: block_end + 1]
+                rest = lines[block_end + 1 :]
+                blocks = ["\n".join(block_lines)]
+                if rest:
+                    blocks += _split_wrapped_lines(rest, max_lines)
+                return blocks
+
+    blocks: List[str] = []
+    cur: List[str] = []
+    for i, line in enumerate(lines):
+        cur.append(line)
+        if len(cur) == max_lines:
+            # Rueckwaerts einen sicheren Schnitt finden
+            cut = -1
+            for k in range(len(cur) - 2, -1, -1):
+                abs_k = i - (len(cur) - 1) + k
+                if _is_safe_cut(lines, depths, abs_k):
+                    cut = k
+                    break
+            if cut == -1:
+                # kein sicherer Schnitt innerhalb max_lines -> hier trennen
+                blocks.append("\n".join(cur))
+                cur = []
+            else:
+                take = cur[: cut + 1]
+                blocks.append("\n".join(take))
+                cur = cur[cut + 1 :]
+    if cur:
+        blocks.append("\n".join(cur))
+    return blocks
+
+
+# Mindestdauer eines gesplitteten Rest-Blocks (ASS-Zeilenumbruch).
+MIN_BLOCK_DURATION = 2.0
+
+
 def split_overflow_entries(
     entries: List[Entry],
     video_width: int,
@@ -214,8 +389,25 @@ def split_overflow_entries(
 
         total_chars = max(1, sum(len(b) for b in blocks))
         current_start = float(entry.start)
-        for block_text in blocks:
-            block_duration = total_time * (len(block_text) / total_chars)
+
+        # Kurzer Rest-Block: Falls der letzte Block weniger als
+        # MIN_BLOCK_DURATION bekommen wuerde, bekommt er exakt
+        # MIN_BLOCK_DURATION und der vorherige Block die Restzeit.
+        n_blocks = len(blocks)
+        durations = [
+            total_time * (len(b) / total_chars) for b in blocks
+        ]
+        if (
+            n_blocks >= 2
+            and durations[-1] < MIN_BLOCK_DURATION
+            and durations[-2] + durations[-1] > MIN_BLOCK_DURATION
+        ):
+            # Rest-Block auf Mindestdauer anheben, Rest auf vorherigen Block
+            overflow = MIN_BLOCK_DURATION - durations[-1]
+            durations[-2] -= overflow
+            durations[-1] = MIN_BLOCK_DURATION
+
+        for block_text, block_duration in zip(blocks, durations):
             out.append(Entry(start=current_start, text=block_text))
             current_start += block_duration
     return out
@@ -507,7 +699,10 @@ def annotate_highlights(verse, highlights, apply_regex=True, base_font_size=42):
     # sind ohne grammatikalischen Anlass gross geschrieben -> Allah-Referenz -> GOD.
     # Satzanfaenge (grammatikalische Grossschreibung, z.B. "He (Muhammad SAW) said")
     # und kleingeschriebene Pronomen ("peace be upon him") werden NICHT markiert.
+    # Nur im Verstext (apply_regex=True); der Titel (Header) bleibt ungefaerbt.
     DIVINE_PRONOUNS = {"he", "him", "his"}
+    if not apply_regex:
+        DIVINE_PRONOUNS = set()
     for i, token in enumerate(tokens):
         clean = normalize(token).lower()
         if clean not in DIVINE_PRONOUNS:
@@ -630,6 +825,8 @@ def build_ass(
 ):
     font_size = max(42, int(height * 0.052))
     line_height = int(round(font_size * 1.25))
+    font_colour = resolve_font_color()
+    primary_colour = font_colour if font_colour is not None else "&H00FFFFFF&"
     events = []
 
     entries_sorted = split_overflow_entries(
@@ -691,7 +888,11 @@ def build_ass(
         if i == 0 and treat_first_as_header:
             header_text = karaoke_reveal_words(wrapped)
             header_font_size = int(font_size * 1.25)
-            tags = rf"\an5\pos({x},{int(height * 0.7)})\fad(200,200)\fs{header_font_size}\b1\c&H00FFFFFF&\3c&H00000000&\bord1\blur0"
+            if resolve_sub_bg() is not None:
+                # sub_bg aktiv: \3c nicht ueberschreiben (Box-Farbe behalten)
+                tags = rf"\an5\pos({x},{int(height * 0.7)})\fad(200,200)\fs{header_font_size}\b1\c{primary_colour}&\bord4\blur0"
+            else:
+                tags = rf"\an5\pos({x},{int(height * 0.7)})\fad(200,200)\fs{header_font_size}\b1\c{primary_colour}&\3c&H00000000&\bord1\blur0"
             events.append(
                 f"Dialogue: 0,{sec_to_ass_time(start)},{sec_to_ass_time(end)},Overlay,,0,0,0,,{{{tags}}}{header_text}"
             )
@@ -749,6 +950,18 @@ def build_ass(
 
     events = [t[2] for t in ts_pairs]
 
+    # --sub-bg: Hintergrund-Box hinter dem Text (SUB_BG_ACTIVE / SUB_BG_COLOR)
+    sub_bg = resolve_sub_bg()
+    if sub_bg is not None:
+        border_style, outline_colour, back_colour = sub_bg
+        outline_width = "4"  # Box-Padding
+    else:
+        border_style, outline_colour, back_colour, outline_width = "1", "&HFF000000&", "&HFF000000&", "1"
+
+    # --font-color: Textfarbe (FONT_COLOR_ACTIVE / FONT_COLOR)
+    font_colour = resolve_font_color()
+    primary_colour = font_colour if font_colour is not None else "&H00FFFFFF&"
+
     ass = [
         "[Script Info]",
         "ScriptType: v4.00+",
@@ -758,7 +971,7 @@ def build_ass(
         "",
         "[V4+ Styles]",
         "Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding",
-        f"Style: Overlay,{font_name},{font_size},&H00FFFFFF,&HFF000000,&HFF000000,&HFF000000,0,0,0,0,100,100,0,0,1,1,0,5,60,60,40,1",
+        f"Style: Overlay,{font_name},{font_size},{primary_colour},&HFF000000,{outline_colour},{back_colour},0,0,0,0,100,100,0,0,{border_style},{outline_width},0,5,60,60,40,1",
         "",
         "[Events]",
         "Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text",

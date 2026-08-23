@@ -34,7 +34,7 @@ Video + Text file
 │            │  → [MM:SS] :: verse_id : text
 │            │
 │            │  write_mapping(lines)
-│            │  → *_mapping.txt
+│            │  → *.mapping
 └────────────┘
 ```
 
@@ -54,7 +54,7 @@ FrameWindow [start_sec ──── end_sec]
 │  1. Audio extraction│  ffmpeg: WAV, mono, 16 kHz
 │     per window      │  [start_sec, end_sec] sliced from video
 │                     │
-│  2. WhisperX        │  Model   : large-v2
+│  2. WhisperX        │  Model   : large-v3
 │     transcription   │  Language: Arabic (ar)
 │                     │  Device  : CUDA / CPU (auto)
 │                     │
@@ -78,6 +78,9 @@ FrameWindow [start_sec ──── end_sec]
   └─────────────────────────────────────────┘
 ```
 
+GPU-intensive Whisper-Inferenz kann auf Modal ausgelagert werden
+(`whisper_modal.py`); VAD und Audio-Extraktion bleiben lokal.
+
 ---
 
 ## Module Overview
@@ -86,9 +89,16 @@ FrameWindow [start_sec ──── end_sec]
 |------------------------|--------------------------------------------------------------|----------------------------------------------------|----------------------------------|
 | `videowindow.py`       | Video → windows between black screens                        | Video path                                         | `List[FrameWindow]`              |
 | `recognizecircle.py`   | Detect circles in a frame (geometric)                        | Grayscale image                                    | Number of detected circles       |
+| `circle_overrides.py`  | Künstliche Kreis-Korrekturen für bekannte Fehl-/Über-Erkennungen | Sure + Window + n                                 | korrigiertes n                  |
 | `circlelog.py`         | Document detected circle timestamps in mapping format        | Timestamps + verse texts                           | `[MM:SS] :: verse_id : text` file|
 | `whispertranscribe.py` | Transcribe audio chunks with WhisperX                        | Video path + `List[FrameWindow]`                   | `List[ChunkTranscription]`       |
+| `whisper_modal.py`     | Modal (serverless GPU) Integration für WhisperX              | Video + Fenster                                    | Transkription                    |
 | `semanticmatch.py`     | Translate Arabic text + match against verse span             | `List[ChunkTranscription]` + verse text (string)   | `MatchSession`                   |
+| `text_ass.py`          | Mapping → ASS-Untertitel (Farb-Highlights, env-colors)       | `*.mapping` + Overlay-Video                        | `*.ass`                          |
+| `word_classifier.py`   | Embedding-gestützte semantische Wortklassifikation (GOD/DESTRUCTIVE/CONSTRUCTIVE) | Wort-Korpus          | Kategorien je Wort              |
+| `overlay_color.py`     | Krita-äquivalentes "Color to Alpha" für den arabic_space-Layer | Ziel-Farbe (#RRGGBB) + Pixel                     | Alpha-/RGB-Transformation        |
+| `tartil.py`            | Tarteel-Echtzeit-Worterkennung via Waydroid/ADB               | Audio + ADB-Zugriff                                | Liste (zeit, arab. Wort)         |
+| `word_align/`          | Wort-Level-Alignment (Whisper + quran.com-API) + Mapping-Patch | Sure/Mapping                                   | `*.word_data.json`, gepatchtes Mapping |
 
 ---
 
@@ -101,7 +111,7 @@ Video
 videowindow ──► List[FrameWindow]
                        │
                per window: recognizecircle
-                       │
+                       │  (+ circle_overrides Korrekturen)
               ┌────────┴────────┐
            n > 0             n = 0
               │                 │
@@ -109,7 +119,7 @@ videowindow ──► List[FrameWindow]
           circlelog      whispertranscribe
      build_verse_line()  transcribe_chunks()
      write_mapping()     → List[ChunkTranscription]
-     → _mapping.txt              │
+     → *.mapping                │
               │                  ▼
               │           semanticmatch
               │           1. Translator : raw_text (ar) → English
@@ -117,6 +127,11 @@ videowindow ──► List[FrameWindow]
                              (verse text = full string from circlelog entry)
                           3. Guard      : completeness (all chunks have result), sequence order
                           → MatchSession
+                              │
+                              ▼
+                        text_ass.py (→ *.ass)
+                        word_classifier (Farb-Kategorien)
+                        tartil / word_align (Wort-Timing)
 ```
 
 ### Guard Detail
@@ -130,3 +145,12 @@ Chunk 3 → translation error                   ✗  → correction_requested = 
 After all chunks:
   missing_chunks not empty → completeness_passed = False
 ```
+
+---
+
+## Git / Daten-Handling
+
+- **`*.mapping`** werden per **Git-LFS** getrackt und gepusht (`.gitattributes`).
+- **Generierte Daten** (`data/`, `output/ass/`, `output/final/`, `finals/`,
+  DBs, PDFs, Videos) sind **nicht** im Repo (`.gitignore`).
+- **Tests** (`tests/`) sind versioniert; Ausführen mit `pytest tests/`.

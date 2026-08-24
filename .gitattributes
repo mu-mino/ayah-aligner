@@ -1,1 +1,2 @@
 *.mapping filter=lfs diff=lfs merge=lfs -text
+output/semantic_tags/ filter=lfs diff=lfs merge=lfs -text

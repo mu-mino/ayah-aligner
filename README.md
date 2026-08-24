@@ -83,6 +83,16 @@ GPU-intensive Whisper-Inferenz kann auf Modal ausgelagert werden
 
 ---
 
+## CLI-Einstiegspunkte
+
+| Skript                | Zweck                                                        |
+|-----------------------|--------------------------------------------------------------|
+| `mapping.py`          | Kern-Pipeline: Video → Windows → Kreise/Whisper → `*.mapping` |
+| `auto_range_runner.py`| Orchestriert Mapping-Runs (Modal GPU) + ASS + Burn für Suren-Ranges |
+| `burn_subtitles.py`   | Brennt fertige `*.ass` + Audio in ein finales Video           |
+
+---
+
 ## Module Overview
 
 | Module                 | Purpose                                                      | Input                                              | Output                           |
@@ -97,8 +107,6 @@ GPU-intensive Whisper-Inferenz kann auf Modal ausgelagert werden
 | `text_ass.py`          | Mapping → ASS-Untertitel (Farb-Highlights, env-colors)       | `*.mapping` + Overlay-Video                        | `*.ass`                          |
 | `word_classifier.py`   | Embedding-gestützte semantische Wortklassifikation (GOD/DESTRUCTIVE/CONSTRUCTIVE) | Wort-Korpus          | Kategorien je Wort              |
 | `overlay_color.py`     | Krita-äquivalentes "Color to Alpha" für den arabic_space-Layer | Ziel-Farbe (#RRGGBB) + Pixel                     | Alpha-/RGB-Transformation        |
-| `tartil.py`            | Tarteel-Echtzeit-Worterkennung via Waydroid/ADB               | Audio + ADB-Zugriff                                | Liste (zeit, arab. Wort)         |
-| `word_align/`          | Wort-Level-Alignment (Whisper + quran.com-API) + Mapping-Patch | Sure/Mapping                                   | `*.word_data.json`, gepatchtes Mapping |
 
 ---
 
@@ -131,7 +139,6 @@ videowindow ──► List[FrameWindow]
                               ▼
                         text_ass.py (→ *.ass)
                         word_classifier (Farb-Kategorien)
-                        tartil / word_align (Wort-Timing)
 ```
 
 ### Guard Detail
@@ -154,3 +161,6 @@ After all chunks:
 - **Generierte Daten** (`data/`, `output/ass/`, `output/final/`, `finals/`,
   DBs, PDFs, Videos) sind **nicht** im Repo (`.gitignore`).
 - **Tests** (`tests/`) sind versioniert; Ausführen mit `pytest tests/`.
+- **Word-Alignment** (`modules/tartil.py`, `modules/word_align/`) ist in der
+  lokalen Branch `version/word-alignment` isoliert gesichert (nicht Teil der
+  aktiven Kern-Pipeline).

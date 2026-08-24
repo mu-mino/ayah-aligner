@@ -255,3 +255,5 @@ build_semantic_highlights.py
 scripts/complete_pipeline.sh
 scripts/pipeline_complete.sh
 scripts/start_pipeline.sh
+# Leeres Artefakt-Verzeichnis (Rest vom 14.08., nicht tracken)
+output/mapping/output/

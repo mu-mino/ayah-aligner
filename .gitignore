@@ -248,12 +248,31 @@ bin/
 .ipynb_checkpoints/
 
 # ---- Lokale Tools (nicht im Remote) ----
+extract_midpoint_frames.py
+extract_windows_all.py
+fetch_missing_api.py
+fetch_qwen_res.py
+map_word_translations.py
+patch_all_mappings.py
+preview_frames.py
+run_all_mappings_locally.py
+run_all_previews.py
+tartil_capture.py
+verify_mapping.py
+
 upload_all.py
 upload_video.py
 modal_runner.py
 build_semantic_highlights.py
+scripts/download_single_video.sh
+scripts/segments_to_hms.py
+scripts/make_dry_ass.py
 scripts/complete_pipeline.sh
 scripts/pipeline_complete.sh
 scripts/start_pipeline.sh
 # Leeres Artefakt-Verzeichnis (Rest vom 14.08., nicht tracken)
 output/mapping/output/
+# Inaktive Module (nicht Teil der Kern-Pipeline)
+modules/tartil.py
+modules/word_align/
+modules/data/

@@ -78,18 +78,18 @@ FrameWindow [start_sec ──── end_sec]
   └─────────────────────────────────────────┘
 ```
 
-GPU-intensive Whisper-Inferenz kann auf Modal ausgelagert werden
-(`whisper_modal.py`); VAD und Audio-Extraktion bleiben lokal.
+GPU-intensive Whisper inference can be offloaded to Modal
+(`whisper_modal.py`); VAD and audio extraction stay local.
 
 ---
 
-## CLI-Einstiegspunkte
+## CLI Entry Points
 
-| Skript                | Zweck                                                        |
+| Script                | Purpose                                                      |
 |-----------------------|--------------------------------------------------------------|
-| `mapping.py`          | Kern-Pipeline: Video → Windows → Kreise/Whisper → `*.mapping` |
-| `auto_range_runner.py`| Orchestriert Mapping-Runs (Modal GPU) + ASS + Burn für Suren-Ranges |
-| `burn_subtitles.py`   | Brennt fertige `*.ass` + Audio in ein finales Video           |
+| `mapping.py`          | Core pipeline: video → windows → circles/whisper → `*.mapping` |
+| `auto_range_runner.py`| Orchestrates mapping runs (Modal GPU) + ASS + burn for surah ranges |
+| `burn_subtitles.py`   | Bakes a finished `*.ass` + audio into a final video            |
 
 ---
 
@@ -99,14 +99,14 @@ GPU-intensive Whisper-Inferenz kann auf Modal ausgelagert werden
 |------------------------|--------------------------------------------------------------|----------------------------------------------------|----------------------------------|
 | `videowindow.py`       | Video → windows between black screens                        | Video path                                         | `List[FrameWindow]`              |
 | `recognizecircle.py`   | Detect circles in a frame (geometric)                        | Grayscale image                                    | Number of detected circles       |
-| `circle_overrides.py`  | Künstliche Kreis-Korrekturen für bekannte Fehl-/Über-Erkennungen | Sure + Window + n                                 | korrigiertes n                  |
+| `circle_overrides.py`  | Artificial circle corrections for known false/missed detections | Surah + window + n                                 | corrected n                  |
 | `circlelog.py`         | Document detected circle timestamps in mapping format        | Timestamps + verse texts                           | `[MM:SS] :: verse_id : text` file|
 | `whispertranscribe.py` | Transcribe audio chunks with WhisperX                        | Video path + `List[FrameWindow]`                   | `List[ChunkTranscription]`       |
-| `whisper_modal.py`     | Modal (serverless GPU) Integration für WhisperX              | Video + Fenster                                    | Transkription                    |
+| `whisper_modal.py`     | Modal (serverless GPU) integration for WhisperX              | Video + window                                    | Transcription                    |
 | `semanticmatch.py`     | Translate Arabic text + match against verse span             | `List[ChunkTranscription]` + verse text (string)   | `MatchSession`                   |
-| `text_ass.py`          | Mapping → ASS-Untertitel (Farb-Highlights, env-colors)       | `*.mapping` + Overlay-Video                        | `*.ass`                          |
-| `word_classifier.py`   | Embedding-gestützte semantische Wortklassifikation (GOD/DESTRUCTIVE/CONSTRUCTIVE) | Wort-Korpus          | Kategorien je Wort              |
-| `overlay_color.py`     | Krita-äquivalentes "Color to Alpha" für den arabic_space-Layer | Ziel-Farbe (#RRGGBB) + Pixel                     | Alpha-/RGB-Transformation        |
+| `text_ass.py`          | Mapping → ASS subtitles (color highlights, env-colors)       | `*.mapping` + Overlay-Video                        | `*.ass`                          |
+| `word_classifier.py`   | Embedding-based semantic word classification (GOD/DESTRUCTIVE/CONSTRUCTIVE) | Word corpus          | Categories per word              |
+| `overlay_color.py`     | Krita-equivalent "Color to Alpha" for the arabic_space layer | Target color (#RRGGBB) + pixel                     | Alpha/RGB transformation        |
 
 ---
 
@@ -119,7 +119,7 @@ Video
 videowindow ──► List[FrameWindow]
                        │
                per window: recognizecircle
-                       │  (+ circle_overrides Korrekturen)
+                       │  (+ circle_overrides corrections)
               ┌────────┴────────┐
            n > 0             n = 0
               │                 │
@@ -138,7 +138,7 @@ videowindow ──► List[FrameWindow]
                               │
                               ▼
                         text_ass.py (→ *.ass)
-                        word_classifier (Farb-Kategorien)
+                        word_classifier (color categories)
 ```
 
 ### Guard Detail
@@ -155,12 +155,12 @@ After all chunks:
 
 ---
 
-## Git / Daten-Handling
+## Git / Data Handling
 
-- **`*.mapping`** werden per **Git-LFS** getrackt und gepusht (`.gitattributes`).
-- **Generierte Daten** (`data/`, `output/ass/`, `output/final/`, `finals/`,
-  DBs, PDFs, Videos) sind **nicht** im Repo (`.gitignore`).
-- **Tests** (`tests/`) sind versioniert; Ausführen mit `pytest tests/`.
-- **Word-Alignment** (`modules/tartil.py`, `modules/word_align/`) ist in der
-  lokalen Branch `version/word-alignment` isoliert gesichert (nicht Teil der
-  aktiven Kern-Pipeline).
+- **`*.mapping`** files are tracked and pushed via **Git-LFS** (`.gitattributes`).
+- **Generated data** (`data/`, `output/ass/`, `output/final/`, `finals/`,
+  DBs, PDFs, videos) are **not** in the repo (`.gitignore`).
+- **Tests** (`tests/`) are versioned; run with `pytest tests/`.
+- **Word alignment** (`modules/tartil.py`, `modules/word_align/`) is isolated
+  and preserved in the local branch `version/word-alignment` (not part of the
+  active core pipeline).
